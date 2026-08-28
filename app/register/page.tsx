@@ -2,19 +2,128 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import bcrypt from "bcryptjs";
+import { createClient } from "@/app/lib/supabase/client";
 
 export default function RegisterPage() {
-  const [position, setPosition] = useState("DFC");
-  const [level, setLevel] = useState("Intermedio");
-  const [accountType, setAccountType] = useState("Jugador");
+  const router = useRouter();
+  const supabase = createClient();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Estados del formulario básico
+  const [nombre, setNombre] = useState("");
+  const [apellido, setApellido] = useState("");
+  const [correo, setCorreo] = useState("");
+  const [apodo, setApodo] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  // Estados de preferencias de juego
+  const [position, setPosition] = useState("DFC");
+  const [preferredDays, setPreferredDays] = useState<string[]>([]);
+  const [preferredShift, setPreferredShift] = useState("Noche");
+
+  // Control de interfaz
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const toggleDay = (dayKey: string) => {
+    setPreferredDays((prev) =>
+      prev.includes(dayKey) ? prev.filter((d) => d !== dayKey) : [...prev, dayKey]
+    );
+  };
+
+  const handleGoogleRegister = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+
+    if (password !== confirmPassword) {
+      setErrorMessage("Las contraseñas no coinciden.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage("La contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      // 1. Verificar si el correo ya existe
+      const { data: usuarioExistente } = await supabase
+        .from("usuario")
+        .select("id_usuario")
+        .eq("correo", correo.trim().toLowerCase())
+        .maybeSingle();
+
+      if (usuarioExistente) {
+        setErrorMessage("El correo electrónico ya está registrado.");
+        setLoading(false);
+        return;
+      }
+
+      // 2. Encriptar contraseña
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // 3. Formatear días preferidos
+      const diasString = preferredDays.length > 0 ? preferredDays.join(",") : "Sin especificar";
+
+      // 4. Inserción estricta respetando las columnas de la BD
+      const { data: nuevoUsuario, error } = await supabase
+        .from("usuario")
+        .insert([
+          {
+            nombre: nombre.trim(),
+            apellido: apellido.trim(),
+            correo: correo.trim().toLowerCase(),
+            contrasena: hashedPassword,
+            apodo: apodo.trim() || null,
+            posicion_juego: position,
+            dias_preferencia: diasString,
+            turno_preferencia: preferredShift,
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Error Supabase:", error);
+        setErrorMessage(`Error al guardar: ${error.message}`);
+        setLoading(false);
+        return;
+      }
+
+      // 5. Guardar sesión e ingresar
+      if (nuevoUsuario) {
+        localStorage.setItem(
+          "userSession",
+          JSON.stringify({
+            id_usuario: nuevoUsuario.id_usuario,
+            nombre: nuevoUsuario.nombre,
+            correo: nuevoUsuario.correo,
+          })
+        );
+        router.push("/dashboard");
+      }
+    } catch (err: any) {
+      setErrorMessage("Ocurrió un error inesperado al registrar la cuenta.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col justify-between font-sans text-gray-800">
-      {/* Header */}
       <header className="w-full bg-white py-4 px-8 border-b border-gray-200 flex items-center justify-between">
         <div className="flex items-center gap-2 text-2xl font-extrabold text-gray-900">
           <span className="text-green-500">📍</span> DeUna<span className="text-green-500">!</span>
@@ -27,35 +136,19 @@ export default function RegisterPage() {
         </div>
       </header>
 
-      {/* Formulario Contenedor Centrado */}
       <main className="flex-1 my-8 flex items-center justify-center px-4">
         <div className="w-full max-w-xl bg-white border border-gray-200 rounded-3xl p-8 shadow-sm flex flex-col items-center">
-          {/* Título */}
           <h1 className="text-2xl font-bold text-gray-900 text-center">
             Regístrate en <span className="text-green-600">DeUna!</span>
           </h1>
-          <p className="text-xs text-gray-500 mt-1 mb-6 text-center">
-            Crea tu perfil, arma tu equipo y reserva tu próxima cancha en segundos.
-          </p>
 
-          {/* Avatar Upload */}
-          <div className="flex flex-col items-center mb-6">
-            <div className="relative w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200 text-gray-400 text-3xl">
-              👤
-              <button
-                type="button"
-                className="absolute bottom-0 right-0 w-6 h-6 bg-green-500 text-white rounded-full flex items-center justify-center text-xs font-bold border-2 border-white cursor-pointer"
-              >
-                +
-              </button>
+          {errorMessage && (
+            <div className="w-full mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-red-600 text-xs font-medium">
+              ⚠️ {errorMessage}
             </div>
-            <span className="text-xs text-green-600 font-semibold mt-2 cursor-pointer">
-              Sube tu foto de perfil
-            </span>
-          </div>
+          )}
 
-          <form onSubmit={handleSubmit} className="w-full space-y-6">
-            {/* Sección: Información Personal */}
+          <form onSubmit={handleSubmit} className="w-full space-y-6 mt-6">
             <div className="space-y-4">
               <h3 className="text-xs font-bold text-green-600 tracking-wider uppercase border-b border-gray-100 pb-1">
                 Información Personal
@@ -63,238 +156,166 @@ export default function RegisterPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">
-                    Nombre Completo
-                  </label>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Nombre</label>
                   <input
                     type="text"
-                    placeholder="Ej. Mateo Fernández"
-                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                    required
+                    value={nombre}
+                    onChange={(e) => setNombre(e.target.value)}
+                    placeholder="Ej. Mateo"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">
-                    Correo Electrónico
-                  </label>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Apellido</label>
                   <input
-                    type="email"
-                    placeholder="mateo@ejemplo.com"
-                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                    type="text"
+                    required
+                    value={apellido}
+                    onChange={(e) => setApellido(e.target.value)}
+                    placeholder="Ej. Fernández"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">
-                    Edad
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Ej. 24"
-                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">
-                    Fecha de Nacimiento
-                  </label>
-                  <div className="grid grid-cols-3 gap-1">
-                    <select className="px-1 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 focus:outline-none">
-                      <option>Día</option>
-                    </select>
-                    <select className="px-1 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 focus:outline-none">
-                      <option>Mes</option>
-                    </select>
-                    <select className="px-1 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 focus:outline-none">
-                      <option>Año</option>
-                    </select>
-                  </div>
-                </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Correo Electrónico</label>
+                <input
+                  type="email"
+                  required
+                  value={correo}
+                  onChange={(e) => setCorreo(e.target.value)}
+                  placeholder="mateo@ejemplo.com"
+                  className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">
-                    Apodo / Alias
-                  </label>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Contraseña</label>
                   <input
-                    type="text"
-                    placeholder="Ej. El 10 de la calle"
-                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">
-                    Teléfono
-                  </label>
-                  <div className="flex gap-2">
-                    <span className="px-3 py-2.5 bg-gray-100 border border-gray-200 rounded-xl text-xs font-bold text-gray-600 flex items-center">
-                      +591
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="71234567"
-                      className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-green-500"
-                    />
-                  </div>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Confirmar Contraseña</label>
+                  <input
+                    type="password"
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Apodo / Alias</label>
+                <input
+                  type="text"
+                  value={apodo}
+                  onChange={(e) => setApodo(e.target.value)}
+                  placeholder="Ej. El 10"
+                  className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                />
               </div>
             </div>
 
-            {/* Sección: Detalles del Jugador */}
             <div className="space-y-4 pt-2">
               <h3 className="text-xs font-bold text-green-600 tracking-wider uppercase border-b border-gray-100 pb-1">
                 Detalles del Jugador
               </h3>
 
-              {/* Posición Preferida */}
               <div>
-                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-2">
-                  Posición Preferida
-                </label>
+                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-2">Posición Preferida</label>
                 <div className="grid grid-cols-4 gap-2">
-                  {[
-                    { id: "POR", title: "Portero" },
-                    { id: "DFC", title: "Defensa" },
-                    { id: "MC", title: "Mediocampo" },
-                    { id: "DC", title: "Delantero" },
-                  ].map((pos) => (
+                  {["POR", "DFC", "MC", "DC"].map((pos) => (
                     <button
-                      key={pos.id}
+                      key={pos}
                       type="button"
-                      onClick={() => setPosition(pos.id)}
-                      className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
-                        position === pos.id
-                          ? "border-green-500 bg-emerald-50 text-green-700 font-bold"
-                          : "border-gray-200 bg-white text-gray-600"
+                      onClick={() => setPosition(pos)}
+                      className={`p-2.5 rounded-xl border text-xs font-bold cursor-pointer transition ${
+                        position === pos ? "border-green-500 bg-emerald-50 text-green-700" : "border-gray-200 bg-white text-gray-600"
                       }`}
                     >
-                      <div className="text-xs font-bold">{pos.id}</div>
-                      <div className="text-[9px] text-gray-400">{pos.title}</div>
+                      {pos}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Nivel de Juego */}
               <div>
-                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-2">
-                  Nivel de Juego
-                </label>
+                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-2">Días de Preferencia</label>
+                <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                  {[
+                    { key: "Lun", label: "L" },
+                    { key: "Mar", label: "M" },
+                    { key: "Mié", label: "X" },
+                    { key: "Jue", label: "J" },
+                    { key: "Vie", label: "V" },
+                    { key: "Sáb", label: "S" },
+                    { key: "Dom", label: "D" },
+                  ].map((dayItem) => (
+                    <button
+                      key={dayItem.key}
+                      type="button"
+                      onClick={() => toggleDay(dayItem.key)}
+                      className={`py-2 rounded-xl border text-xs font-bold cursor-pointer transition ${
+                        preferredDays.includes(dayItem.key) ? "border-green-500 bg-emerald-50 text-green-700" : "border-gray-200 bg-white text-gray-600"
+                      }`}
+                    >
+                      {dayItem.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-2">Turno de Preferencia</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { id: "Amateur", stars: "⭐" },
-                    { id: "Intermedio", stars: "⭐⭐" },
-                    { id: "Profesional", stars: "⭐⭐⭐" },
-                  ].map((item) => (
+                  {["Mañana", "Tarde", "Noche"].map((shift) => (
                     <button
-                      key={item.id}
+                      key={shift}
                       type="button"
-                      onClick={() => setLevel(item.id)}
-                      className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
-                        level === item.id
-                          ? "border-green-500 bg-emerald-50 text-green-700 font-bold"
-                          : "border-gray-200 bg-white text-gray-600"
+                      onClick={() => setPreferredShift(shift)}
+                      className={`p-2.5 rounded-xl border text-xs cursor-pointer transition ${
+                        preferredShift === shift ? "border-green-500 bg-emerald-50 text-green-700 font-bold" : "border-gray-200 bg-white text-gray-600"
                       }`}
                     >
-                      <div className="text-[10px]">{item.stars}</div>
-                      <div className="text-xs">{item.id}</div>
+                      {shift}
                     </button>
                   ))}
-                </div>
-              </div>
-
-              {/* Tipo de Cuenta */}
-              <div>
-                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-2">
-                  Tipo de Cuenta
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setAccountType("Jugador")}
-                    className={`p-3 rounded-2xl border text-left flex items-start gap-3 transition cursor-pointer ${
-                      accountType === "Jugador"
-                        ? "border-green-500 bg-emerald-50"
-                        : "border-gray-200 bg-white"
-                    }`}
-                  >
-                    <span className="p-1.5 bg-green-100 text-green-600 rounded-lg text-sm">👤</span>
-                    <div>
-                      <div className="text-xs font-bold text-gray-900">Jugador</div>
-                      <div className="text-[10px] text-gray-500 leading-tight mt-0.5">
-                        Busca canchas y arma tus partidos.
-                      </div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setAccountType("Dueño")}
-                    className={`p-3 rounded-2xl border text-left flex items-start gap-3 transition cursor-pointer ${
-                      accountType === "Dueño"
-                        ? "border-green-500 bg-emerald-50"
-                        : "border-gray-200 bg-white"
-                    }`}
-                  >
-                    <span className="p-1.5 bg-gray-100 text-gray-600 rounded-lg text-sm">🏠</span>
-                    <div>
-                      <div className="text-xs font-bold text-gray-900">Dueño de cancha</div>
-                      <div className="text-[10px] text-gray-500 leading-tight mt-0.5">
-                        Administra tus reservas y gana más.
-                      </div>
-                    </div>
-                  </button>
                 </div>
               </div>
             </div>
 
-            {/* Botón Crear Cuenta */}
             <button
               type="submit"
-              className="w-full py-3 bg-green-500 text-white font-bold rounded-xl hover:bg-green-600 transition duration-200 text-xs flex items-center justify-center gap-1 cursor-pointer"
+              disabled={loading}
+              className="w-full py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl text-xs transition disabled:opacity-50 cursor-pointer"
             >
-              CREAR CUENTA →
+              {loading ? "GUARDANDO..." : "CREAR CUENTA →"}
             </button>
           </form>
 
-          {/* Separador */}
-          <div className="relative w-full my-6 flex items-center justify-center">
-            <div className="border-t border-gray-200 w-full"></div>
-            <span className="bg-white px-3 text-[10px] text-gray-400 uppercase tracking-wider absolute">
-              O regístrate con
-            </span>
-          </div>
-
-          {/* Redes Sociales */}
-          <div className="grid grid-cols-2 gap-4 w-full">
+          <div className="w-full mt-6">
             <button
               type="button"
-              className="flex items-center justify-center gap-2 py-2.5 px-4 bg-white border border-gray-200 hover:bg-gray-50 rounded-xl transition text-xs font-bold text-gray-700 cursor-pointer"
+              onClick={handleGoogleRegister}
+              className="w-full py-2.5 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2 cursor-pointer"
             >
-              <span>❌</span> Google
-            </button>
-            <button
-              type="button"
-              className="flex items-center justify-center gap-2 py-2.5 px-4 bg-white border border-gray-200 hover:bg-gray-50 rounded-xl transition text-xs font-bold text-blue-800 cursor-pointer"
-            >
-              <span>f</span> Facebook
+              <span>Continuar con Google</span>
             </button>
           </div>
-
-          <p className="text-[10px] text-gray-400 mt-6 text-center">
-            Al registrarte, aceptas nuestros{" "}
-            <a href="#" className="underline">Términos y condiciones</a> y{" "}
-            <a href="#" className="underline">Política de privacidad</a>.
-          </p>
         </div>
       </main>
-
-      {/* Footer minimalista */}
-      <footer className="w-full bg-white py-4 text-center border-t border-gray-200 text-xs text-gray-400">
-        © 2026 DeUna! Todos los derechos reservados.
-      </footer>
     </div>
   );
 }
