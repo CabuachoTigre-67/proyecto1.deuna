@@ -14,6 +14,8 @@ export default function RegisterPage() {
   const [nombre, setNombre] = useState("");
   const [apellido, setApellido] = useState("");
   const [correo, setCorreo] = useState("");
+  const [telefono, setTelefono] = useState("");
+  const [fechaNacimiento, setFechaNacimiento] = useState("");
   const [apodo, setApodo] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -45,6 +47,18 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+
+    // Validación de teléfono (exactamente 8 dígitos numéricos)
+    const phoneRegex = /^\d{8}$/;
+    if (!phoneRegex.test(telefono)) {
+      setErrorMessage("El teléfono debe contener exactamente 8 dígitos numéricos.");
+      return;
+    }
+
+    if (!fechaNacimiento) {
+      setErrorMessage("Por favor selecciona tu fecha de nacimiento.");
+      return;
+    }
 
     if (password !== confirmPassword) {
       setErrorMessage("Las contraseñas no coinciden.");
@@ -78,7 +92,7 @@ export default function RegisterPage() {
       // 3. Formatear días preferidos
       const diasString = preferredDays.length > 0 ? preferredDays.join(",") : "Sin especificar";
 
-      // 4. Inserción estricta respetando las columnas de la BD
+      // 4. Inserción respetando la estructura exacta de la BD
       const { data: nuevoUsuario, error } = await supabase
         .from("usuario")
         .insert([
@@ -86,11 +100,14 @@ export default function RegisterPage() {
             nombre: nombre.trim(),
             apellido: apellido.trim(),
             correo: correo.trim().toLowerCase(),
+            telefono: telefono.trim(),
+            fecha_nacimiento: fechaNacimiento,
             contrasena: hashedPassword,
             apodo: apodo.trim() || null,
             posicion_juego: position,
             dias_preferencia: diasString,
             turno_preferencia: preferredShift,
+            rol: "Jugador", // Se ajustó a mayúsculas según la convención del ENUM en PostgreSQL
           },
         ])
         .select()
@@ -179,16 +196,53 @@ export default function RegisterPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Correo Electrónico</label>
-                <input
-                  type="email"
-                  required
-                  value={correo}
-                  onChange={(e) => setCorreo(e.target.value)}
-                  placeholder="mateo@ejemplo.com"
-                  className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Correo Electrónico</label>
+                  <input
+                    type="email"
+                    required
+                    value={correo}
+                    onChange={(e) => setCorreo(e.target.value)}
+                    placeholder="mateo@ejemplo.com"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Teléfono (8 dígitos)</label>
+                  <input
+                    type="tel"
+                    required
+                    maxLength={8}
+                    value={telefono}
+                    onChange={(e) => setTelefono(e.target.value.replace(/\D/g, ""))}
+                    placeholder="71234567"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Fecha de Nacimiento</label>
+                  <input
+                    type="date"
+                    required
+                    value={fechaNacimiento}
+                    onChange={(e) => setFechaNacimiento(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Apodo / Alias</label>
+                  <input
+                    type="text"
+                    value={apodo}
+                    onChange={(e) => setApodo(e.target.value)}
+                    placeholder="Ej. El 10"
+                    className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -214,17 +268,6 @@ export default function RegisterPage() {
                     className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-gray-700 uppercase mb-1">Apodo / Alias</label>
-                <input
-                  type="text"
-                  value={apodo}
-                  onChange={(e) => setApodo(e.target.value)}
-                  placeholder="Ej. El 10"
-                  className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-green-500 focus:outline-none"
-                />
               </div>
             </div>
 
