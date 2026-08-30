@@ -100,7 +100,7 @@ export default function NuevaCanchaPage() {
         throw new Error("Por favor completa los campos obligatorios.");
       }
 
-      // 1. Insertar cancha con estado 'pendiente'
+      // 1. Insertar cancha con estado 'Pendiente'
       const { data: nuevaCancha, error: canchaError } = await supabase
         .from("cancha")
         .insert({
@@ -115,31 +115,51 @@ export default function NuevaCanchaPage() {
         .select()
         .single();
 
-      if (canchaError) throw canchaError;
-
-      // 2. Notificación para el Propietario/Jugador
-      if (idPropietario) {
-        await supabase.from("notificacion").insert({
-          id_usuario: idPropietario,
-          titulo: "Cancha en revisión ⏳",
-          mensaje: `Su cancha "${form.nombre.trim()}" está en revisión por el personal de mantenimiento.`,
-        });
+      if (canchaError) {
+        console.error("Error Supabase Cancha:", canchaError);
+        throw new Error("Error al guardar cancha: " + canchaError.message);
       }
 
-      // 3. Notificación para el personal de Mantenimiento
-      const { data: usuariosMantenimiento } = await supabase
+      // 2. Notificación para el usuario que creó la cancha
+      if (idPropietario) {
+        const { error: notifUserErr } = await supabase.from("notificacion").insert({
+          id_usuario: idPropietario,
+          titulo: "Cancha enviada a revisión ⏳",
+          mensaje: `La cancha "${form.nombre.trim()}" fue mandada a revisión por el personal de mantenimiento.`,
+          leido: false,
+        });
+
+        if (notifUserErr) {
+          console.error("Error al notificar al propietario:", notifUserErr);
+        }
+      }
+
+      // 3. Notificación para los usuarios con el rol 'mantenimiento'
+      const { data: usuarios, error: userError } = await supabase
         .from("usuario")
-        .select("id_usuario")
-        .ilike("rol", "Mantenimiento");
+        .select("id_usuario, rol");
 
-      if (usuariosMantenimiento && usuariosMantenimiento.length > 0) {
-        const notifsMantenimiento = usuariosMantenimiento.map((m) => ({
-          id_usuario: m.id_usuario,
-          titulo: "Solicitud de cancha 🏟️",
-          mensaje: `Nueva cancha solicitada: "${form.nombre.trim()}". Ubicación: ${form.ubicacion}`,
-        }));
+      if (!userError && usuarios) {
+        const mantenimientoUsers = usuarios.filter(
+          (u) => u.rol && u.rol.trim().toLowerCase() === "mantenimiento"
+        );
 
-        await supabase.from("notificacion").insert(notifsMantenimiento);
+        if (mantenimientoUsers.length > 0) {
+          const notifsMantenimiento = mantenimientoUsers.map((m) => ({
+            id_usuario: m.id_usuario,
+            titulo: "Nueva solicitud de cancha 🏟️",
+            mensaje: `Se solicitó una nueva cancha: "${form.nombre.trim()}".`,
+            leido: false,
+          }));
+
+          const { error: notifMantErr } = await supabase
+            .from("notificacion")
+            .insert(notifsMantenimiento);
+
+          if (notifMantErr) {
+            console.error("Error al notificar a mantenimiento:", notifMantErr);
+          }
+        }
       }
 
       setSuccess(true);
@@ -147,6 +167,7 @@ export default function NuevaCanchaPage() {
         router.push("/dashboard");
       }, 2500);
     } catch (err: any) {
+      console.error("Error handleSubmit:", err);
       setError(err.message || "Error al registrar la cancha.");
     } finally {
       setLoading(false);

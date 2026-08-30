@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/app/lib/supabase/client";
+import NotificationBell from "@/app/components/NotificationBell";
 
 interface UserProfile {
   id_usuario: number;
@@ -118,12 +119,8 @@ export default function DashboardLayout({
 
         {/* Notificaciones y Perfil del Usuario */}
         <div className="flex items-center gap-4 shrink-0">
-          <button
-            type="button"
-            className="p-2 bg-emerald-800/60 hover:bg-emerald-800 rounded-full text-xs text-emerald-200 transition border border-emerald-700/50"
-          >
-            🔔
-          </button>
+          {/* Componente de la Campanita de Notificaciones */}
+          <NotificationBell />
 
           <div className="relative">
             <button
