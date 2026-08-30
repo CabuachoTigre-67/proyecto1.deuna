@@ -1,191 +1,297 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import Link from "next/link";
+import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { createClient } from "@/app/lib/supabase/client";
 
-interface Cancha {
-  id_cancha: number;
-  nombre: string;
-  direccion?: string;
-  tipo_superficie?: string;
-  precio_hora?: number;
-  estado?: string;
-  imagen_url?: string;
-}
+const MapPicker = dynamic(() => import("@/app/components/MapPicker"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-64 w-full items-center justify-center rounded-2xl bg-slate-100 text-xs font-semibold text-slate-400">
+      🗺️ Cargando mapa...
+    </div>
+  ),
+});
 
-export default function DashboardCanchasPage() {
+export default function NuevaCanchaPage() {
+  const router = useRouter();
   const supabase = createClient();
 
-  const [canchas, setCanchas] = useState<Cancha[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+  const [idPropietario, setIdPropietario] = useState<number | null>(null);
 
-  useEffect(() => {
-    async function loadCanchas() {
-      try {
-        const { data, error: supabaseError } = await supabase
-          .from("cancha")
-          .select("*")
-          .order("id_cancha", { ascending: true });
-
-        if (supabaseError) throw supabaseError;
-
-        setCanchas(data || []);
-      } catch (err: any) {
-        console.error("Error al cargar canchas:", err);
-        setError("No se pudieron cargar las canchas disponibles.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadCanchas();
-  }, [supabase]);
-
-  // Filtrado de canchas según búsqueda
-  const canchasFiltradas = canchas.filter((cancha) => {
-    const term = searchTerm.toLowerCase();
-    return (
-      cancha.nombre?.toLowerCase().includes(term) ||
-      cancha.tipo_superficie?.toLowerCase().includes(term) ||
-      cancha.direccion?.toLowerCase().includes(term)
-    );
+  const [form, setForm] = useState({
+    nombre: "",
+    ubicacion: "https://www.google.com/maps?q=-17.7833,-63.1821",
+    tipo_juego: "Fútbol 5",
+    precio: "",
+    imagen: "",
+    lat: -17.7833,
+    lng: -63.1821,
   });
 
+  useEffect(() => {
+    const sessionString = localStorage.getItem("userSession");
+    if (sessionString) {
+      try {
+        const session = JSON.parse(sessionString);
+        if (session?.id_usuario) {
+          setIdPropietario(session.id_usuario);
+        }
+      } catch (err) {
+        console.error("Error al leer sesión:", err);
+      }
+    }
+  }, []);
+
+  function update(field: string, value: any) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function handleLocationSelect(lat: number, lng: number) {
+    const mapsUrl = `https://www.google.com/maps?q=${lat.toFixed(6)},${lng.toFixed(6)}`;
+    setForm((prev) => ({
+      ...prev,
+      lat,
+      lng,
+      ubicacion: mapsUrl,
+    }));
+  }
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || "Error al subir la imagen");
+
+      update("imagen", data.url);
+    } catch (err: any) {
+      setError("No se pudo subir la imagen: " + err.message);
+    } finally {
+      setUploadingImage(false);
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    try {
+      if (!form.nombre.trim() || !form.ubicacion.trim() || !form.precio) {
+        throw new Error("Por favor completa los campos obligatorios.");
+      }
+
+      // 1. Insertar cancha con estado 'pendiente'
+      const { data: nuevaCancha, error: canchaError } = await supabase
+        .from("cancha")
+        .insert({
+          id_propietario: idPropietario,
+          nombre: form.nombre.trim(),
+          ubicacion: form.ubicacion,
+          tipo_juego: form.tipo_juego,
+          precio: parseFloat(form.precio),
+          imagen: form.imagen,
+          estado: "Pendiente",
+        })
+        .select()
+        .single();
+
+      if (canchaError) throw canchaError;
+
+      // 2. Notificación para el Propietario/Jugador
+      if (idPropietario) {
+        await supabase.from("notificacion").insert({
+          id_usuario: idPropietario,
+          titulo: "Cancha en revisión ⏳",
+          mensaje: `Su cancha "${form.nombre.trim()}" está en revisión por el personal de mantenimiento.`,
+        });
+      }
+
+      // 3. Notificación para el personal de Mantenimiento
+      const { data: usuariosMantenimiento } = await supabase
+        .from("usuario")
+        .select("id_usuario")
+        .ilike("rol", "Mantenimiento");
+
+      if (usuariosMantenimiento && usuariosMantenimiento.length > 0) {
+        const notifsMantenimiento = usuariosMantenimiento.map((m) => ({
+          id_usuario: m.id_usuario,
+          titulo: "Solicitud de cancha 🏟️",
+          mensaje: `Nueva cancha solicitada: "${form.nombre.trim()}". Ubicación: ${form.ubicacion}`,
+        }));
+
+        await supabase.from("notificacion").insert(notifsMantenimiento);
+      }
+
+      setSuccess(true);
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 2500);
+    } catch (err: any) {
+      setError(err.message || "Error al registrar la cancha.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const baseInputClass =
+    "w-full rounded-xl border border-slate-200 bg-white px-3.5 py-3 text-sm font-medium text-slate-800 outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20 transition";
+
   return (
-    <div className="mx-auto max-w-6xl space-y-8 font-sans text-slate-800">
-      {/* Encabezado y Acción Principal */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-black text-white tracking-tight">
-            Canchas Disponibles
-          </h1>
-          <p className="mt-1 text-xs font-medium text-emerald-200/80">
-            Explora las instalaciones deportivas o añade un nuevo campo de juego.
-          </p>
-        </div>
-
-        {/* Botón para Añadir Nueva Cancha */}
-        <Link
-          href="/dashboard/canchas/nueva"
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition active:scale-95"
-        >
-          <span className="text-base font-black">+</span> Añadir Nueva Cancha
-        </Link>
+    <div className="mx-auto max-w-2xl space-y-6 font-sans text-slate-800">
+      <div>
+        <h1 className="text-3xl font-black text-white tracking-tight">
+          Solicitar Alta de Cancha
+        </h1>
+        <p className="mt-1 text-xs font-medium text-emerald-200/80">
+          Haz clic en el mapa para fijar la ubicación exacta. Se enviará a revisión para su aprobación.
+        </p>
       </div>
 
-      {/* Contenedor Principal en Tarjeta Blanca */}
-      <div className="rounded-3xl bg-white p-6 shadow-xl sm:p-8 space-y-6">
-        {/* Barra de Búsqueda */}
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Buscar cancha por nombre, superficie o ubicación..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 pl-10 text-sm font-medium text-slate-800 outline-none focus:border-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-600/20 transition"
-          />
-          <span className="absolute left-3.5 top-3.5 text-slate-400 text-sm">
-            🔍
-          </span>
-        </div>
+      <form
+        onSubmit={handleSubmit}
+        className="space-y-6 rounded-3xl bg-white p-6 shadow-xl sm:p-8"
+      >
+        <div className="space-y-4">
+          <label className="block text-xs font-bold text-slate-700">
+            Nombre de la Cancha *
+            <input
+              type="text"
+              required
+              placeholder="Ej: Cancha Sintética El Maracaná"
+              value={form.nombre}
+              onChange={(e) => update("nombre", e.target.value)}
+              className={baseInputClass}
+            />
+          </label>
 
-        {/* Estado de Carga */}
-        {loading && (
-          <div className="py-12 text-center">
-            <p className="animate-pulse text-sm font-semibold text-emerald-600">
-              Cargando catálogo de canchas...
-            </p>
+          <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-700">
+              Selecciona la Ubicación en el Mapa (Haz clic para mover el pin 📍)
+            </label>
+            <div className="overflow-hidden rounded-2xl border border-slate-200 shadow-inner">
+              <MapPicker
+                lat={form.lat}
+                lng={form.lng}
+                onSelectLocation={handleLocationSelect}
+              />
+            </div>
           </div>
-        )}
 
-        {/* Estado de Error */}
-        {error && (
-          <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-xs font-bold text-red-600">
-            ⚠️ {error}
+          <label className="block text-xs font-bold text-slate-700">
+            Dirección / Referencia (Enlace de Google Maps) *
+            <input
+              type="text"
+              required
+              readOnly
+              value={form.ubicacion}
+              className={`${baseInputClass} bg-slate-100 text-slate-600 font-mono text-xs`}
+            />
+          </label>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="text-xs font-bold text-slate-700">
+              Tipo de Juego
+              <select
+                value={form.tipo_juego}
+                onChange={(e) => update("tipo_juego", e.target.value)}
+                className={baseInputClass}
+              >
+                <option value="Fútbol 5">Fútbol 5</option>
+                <option value="Fútbol 7">Fútbol 7</option>
+                <option value="Fútbol 8">Fútbol 8</option>
+                <option value="Fútbol 11">Fútbol 11</option>
+                <option value="Futsal">Futsal</option>
+              </select>
+            </label>
+
+            <label className="text-xs font-bold text-slate-700">
+              Precio por Hora (Bs.) *
+              <input
+                type="number"
+                required
+                min="0"
+                step="0.01"
+                placeholder="120"
+                value={form.precio}
+                onChange={(e) => update("precio", e.target.value)}
+                className={baseInputClass}
+              />
+            </label>
           </div>
-        )}
 
-        {/* Lista de Canchas */}
-        {!loading && !error && (
-          <>
-            {canchasFiltradas.length === 0 ? (
-              <div className="py-12 text-center text-slate-500">
-                <p className="text-sm font-bold">No se encontraron canchas.</p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Intenta con otros términos de búsqueda o registra una nueva.
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {canchasFiltradas.map((cancha) => (
-                  <div
-                    key={cancha.id_cancha}
-                    className="group overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm hover:shadow-md transition flex flex-col justify-between"
-                  >
-                    {/* Imagen / Placeholder */}
-                    <div className="relative h-40 w-full bg-slate-100 flex items-center justify-center overflow-hidden">
-                      {cancha.imagen_url ? (
-                        <img
-                          src={cancha.imagen_url}
-                          alt={cancha.nombre}
-                          className="h-full w-full object-cover group-hover:scale-105 transition duration-300"
-                        />
-                      ) : (
-                        <div className="flex flex-col items-center gap-1 text-slate-400">
-                          <span className="text-3xl">⚽</span>
-                          <span className="text-[10px] font-bold uppercase tracking-wider">
-                            Sin Imagen
-                          </span>
-                        </div>
-                      )}
-                      {cancha.tipo_superficie && (
-                        <span className="absolute top-3 left-3 rounded-lg bg-slate-900/80 px-2.5 py-1 text-[10px] font-bold text-white backdrop-blur-sm">
-                          {cancha.tipo_superficie}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Información de la Cancha */}
-                    <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
-                      <div>
-                        <h3 className="text-base font-bold text-slate-900 capitalize group-hover:text-emerald-600 transition">
-                          {cancha.nombre}
-                        </h3>
-                        {cancha.direccion && (
-                          <p className="mt-1 text-xs text-slate-500 line-clamp-1">
-                            📍 {cancha.direccion}
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-                        <div>
-                          <span className="block text-[10px] font-bold uppercase text-slate-400">
-                            Precio / Hora
-                          </span>
-                          <span className="text-sm font-black text-emerald-600">
-                            Bs. {cancha.precio_hora ?? "--"}
-                          </span>
-                        </div>
-
-                        <Link
-                          href={`/dashboard/canchas/${cancha.id_cancha}`}
-                          className="rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-emerald-600 hover:text-white transition"
-                        >
-                          Ver Detalle
-                        </Link>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-700">
+              Subir Imagen de la Cancha
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="block w-full text-xs text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-4 file:py-2.5 file:text-xs file:font-bold file:text-emerald-700 hover:file:bg-emerald-100"
+            />
+            {uploadingImage && (
+              <p className="text-[11px] font-semibold text-emerald-600 animate-pulse">
+                Subiendo imagen...
+              </p>
             )}
-          </>
+            {form.imagen && (
+              <p className="text-[11px] font-bold text-slate-600">
+                ✅ Imagen guardada en: <code className="bg-slate-100 px-1 py-0.5 rounded">{form.imagen}</code>
+              </p>
+            )}
+          </div>
+        </div>
+
+        {error && (
+          <p className="rounded-xl bg-red-50 border border-red-200 p-3.5 text-xs font-bold text-red-600">
+            ⚠️ {error}
+          </p>
         )}
-      </div>
+
+        {success && (
+          <p className="rounded-xl bg-emerald-50 border border-emerald-200 p-3.5 text-xs font-bold text-emerald-700">
+            ✅ ¡Cancha enviada! Su cancha está en revisión y se notificó al personal de mantenimiento.
+          </p>
+        )}
+
+        <div className="flex gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="w-1/3 rounded-xl border border-slate-300 py-3.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition"
+          >
+            Cancelar
+          </button>
+
+          <button
+            type="submit"
+            disabled={loading || uploadingImage || success}
+            className="w-full rounded-xl bg-emerald-600 py-3.5 text-xs font-bold text-white transition hover:bg-emerald-700 active:scale-[0.99] shadow-md disabled:opacity-50"
+          >
+            {loading ? "Registrando..." : "📨 Registrar y Solicitar Verificación"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

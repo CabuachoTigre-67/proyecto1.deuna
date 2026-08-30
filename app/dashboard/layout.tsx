@@ -80,7 +80,7 @@ export default function DashboardLayout({
   const navLinks = [
     { name: "⚽ Canchas", href: "/dashboard/projects" },
     { name: "📅 Mis Reservas", href: "/dashboard/reservas" },
-    { name: "💬 Mensajes", href: "/dashboard/mensajes" },
+    { name: "💬 Mensajes", href: "/dashboard/message" },
     { name: "❓ Soporte", href: "/dashboard/soporte" },
   ];
 
