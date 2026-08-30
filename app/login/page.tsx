@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import bcrypt from "bcryptjs";
@@ -8,7 +8,14 @@ import { createClient } from "@/app/lib/supabase/client";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const savedTheme = window.localStorage.getItem("theme");
+    if (savedTheme === "light" || savedTheme === "dark") {
+      return savedTheme === "dark";
+    }
+    return true;
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -20,6 +27,10 @@ export default function LoginPage() {
   });
 
   const supabase = createClient();
+
+  useEffect(() => {
+    window.localStorage.setItem("theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
 
   const handleGoogleLogin = async () => {
     await supabase.auth.signInWithOAuth({
@@ -36,7 +47,6 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // 1. Busca en la tabla 'usuario' usando el atributo 'correo'
       const { data: usuario, error } = await supabase
         .from("usuario")
         .select("*")
@@ -49,14 +59,12 @@ export default function LoginPage() {
         return;
       }
 
-      // 2. Si el correo no existe en la base de datos
       if (!usuario) {
         setErrorMessage("El correo electrónico no se encuentra registrado.");
         setLoading(false);
         return;
       }
 
-      // 3. Compara la contraseña ingresada con el hash del atributo 'contrasena'
       const passwordMatch = await bcrypt.compare(formData.password, usuario.contrasena);
 
       if (!passwordMatch) {
@@ -65,15 +73,17 @@ export default function LoginPage() {
         return;
       }
 
-      // 4. Si coincide la clave, guarda la sesión y redirige
-      localStorage.setItem("userSession", JSON.stringify({
-        id_usuario: usuario.id_usuario,
-        nombre: usuario.nombre,
-        correo: usuario.correo,
-        rol: usuario.rol
-      }));
+      localStorage.setItem(
+        "userSession",
+        JSON.stringify({
+          id_usuario: usuario.id_usuario,
+          nombre: usuario.nombre,
+          correo: usuario.correo,
+          rol: usuario.rol,
+        })
+      );
 
-      router.push("/dashboard"); // Ajusta la ruta de destino deseada
+      router.push("/dashboard");
     } catch (err) {
       setErrorMessage("Ocurrió un error inesperado al procesar la solicitud.");
     } finally {
@@ -81,207 +91,266 @@ export default function LoginPage() {
     }
   };
 
-  return (
-    <div className={`min-h-screen flex flex-col font-sans ${darkMode ? "dark bg-[#0b1320] text-white" : "bg-gray-50 text-gray-900"}`}>
-      
-      {/* Navbar Superior */}
-      <header className="w-full h-16 px-6 flex items-center justify-between border-b border-gray-200/10 bg-white/5 backdrop-blur-md fixed top-0 left-0 z-50">
-        <div className="flex items-center gap-2 font-bold text-xl tracking-wide">
-          <span className="text-emerald-500 text-2xl">⚽</span>
-          <span>DeUna!</span>
-        </div>
+  const stadiumBackground = darkMode
+    ? "/images/estadios.jpg/2f775e1f-f221-4860-924c-4a6ebb3538ae.png"
+    : "/images/estadios.jpg/207dca3c-b589-4923-9df4-719dfb06d419.png";
 
-        <div className="flex items-center gap-4 text-sm">
-          {/* Ubicación */}
-          <div className="hidden sm:flex items-center gap-1.5 text-gray-400 dark:text-gray-300">
-            <span className="text-emerald-500">📍</span>
-            <span>Santa Cruz de la Sierra</span>
+  const pageShell = darkMode ? "bg-[#030a0d] text-white" : "bg-[#eaf1ee] text-[#122126]";
+  const headerClass = darkMode ? "bg-[#040a0d]" : "bg-[#f5f7f6]";
+  const panelClass = darkMode
+    ? "bg-[#111d26]/85 border-white/10 text-white shadow-[0_25px_70px_rgba(2,8,14,0.65)]"
+    : "bg-[#f4f6f4]/90 border-[#dfe9e6] text-[#16312f] shadow-[0_18px_50px_rgba(15,23,42,0.08)]";
+  const mutedText = darkMode ? "text-white/70" : "text-[#1e3b39]";
+  const featureCard = darkMode
+    ? "border-white/10 bg-white/5 text-white"
+    : "border-[#dfe9e6] bg-white/80 text-[#12312d]";
+  const inputClass = darkMode
+    ? "border-white/10 bg-[#111d26] text-white placeholder:text-slate-400"
+    : "border-[#d8e0dd] bg-white text-[#11302f] placeholder:text-slate-500";
+  const buttonThemeClass = darkMode
+    ? "border-white/10 bg-[#1a262d] text-amber-300 hover:bg-[#243742]"
+    : "border-[#dfe9e6] bg-white text-[#122126] hover:bg-slate-100";
+  const heroOverlay = darkMode
+    ? "linear-gradient(180deg, rgba(2,5,8,0.10) 0%, rgba(2,5,8,0.18) 30%, rgba(2,5,8,0.28) 100%)"
+    : "linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(7,21,19,0.12) 26%, rgba(7,21,19,0.36) 100%)";
+  const lightHeroTitle = darkMode ? "text-white" : "text-[#0fd07f]";
+  const lightBrand = darkMode ? "text-[#1bbf6a]" : "text-[#1bbf6a]";
+  const pageFooterClass = darkMode ? "bg-[#040b0d] border-white/10 text-white/75" : "bg-[#f4f7f6] border-[#dfe9e6] text-[#12312d]";
+  const socialButtonClass = darkMode
+    ? "border-white/10 bg-[#101d27] text-white hover:bg-[#172b39]"
+    : "border-[#dfe9e6] bg-white text-[#17332f] hover:bg-slate-50";
+
+  return (
+    <div className={`min-h-screen flex flex-col ${pageShell}`}>
+      <header className={`w-full ${headerClass}`}>
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3 font-black text-3xl tracking-tight">
+            <div className={`flex h-9 w-9 items-center justify-center rounded-full ${darkMode ? "bg-[#0d1a1f]" : "bg-[#e2f5eb]"}`}>
+              <i className="fa-solid fa-futbol text-xl text-[#1bbf6a]" />
+            </div>
+            <span className={lightBrand}>DeUna!</span>
           </div>
 
-          {/* Toggle Modo Oscuro / Claro */}
-          <button
-            onClick={() => setDarkMode(!darkMode)}
-            className="p-2 rounded-full hover:bg-white/10 text-amber-400 transition"
-            aria-label="Cambiar tema"
-          >
-            {darkMode ? "☀️" : "🌙"}
-          </button>
+          <div className="flex items-center gap-3 sm:gap-5">
+            <button
+              type="button"
+              aria-label="Cambiar tema"
+              onClick={() => setDarkMode(!darkMode)}
+              className={`flex h-11 w-11 items-center justify-center rounded-full border ${buttonThemeClass}`}
+            >
+              <i className={`fa-solid ${darkMode ? "fa-sun" : "fa-moon"}`} />
+            </button>
 
-          {/* Botón Crear Cuenta */}
-          <Link
-            href="/register"
-            className="bg-emerald-500 hover:bg-emerald-600 text-white font-semibold px-4 py-2 rounded-xl transition shadow-lg shadow-emerald-500/20"
-          >
-            Crear cuenta
-          </Link>
+            <Link
+              href="/register"
+              className="inline-flex items-center justify-center rounded-xl border border-emerald-500 bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-600"
+            >
+              Regístrate
+            </Link>
+          </div>
         </div>
       </header>
 
-      {/* Cuerpo Principal */}
-      <main className="flex-1 flex flex-col lg:flex-row pt-16 min-h-screen">
-        
-        {/* Columna Izquierda: Hero con imagen de fondo */}
-        <div className="relative lg:w-1/2 min-h-[500px] lg:min-h-full flex flex-col justify-between p-8 lg:p-12 bg-cover bg-center" style={{ backgroundImage: "url('/stadium-banner.jpg')" }}>
-          <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-black/30 z-0" />
+      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 px-4 py-5 sm:px-6 lg:flex-row lg:items-stretch lg:gap-8 lg:px-8 lg:py-7">
+        <section
+          className="relative overflow-hidden rounded-[28px] lg:w-[58%]"
+          style={{
+            backgroundImage: `${heroOverlay}, url(${stadiumBackground})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            backgroundRepeat: "no-repeat",
+          }}
+        >
+          <div className="flex min-h-[470px] flex-col justify-between p-5 sm:p-7 lg:min-h-[760px] lg:p-8">
+            <div className="relative z-10 max-w-xl pt-2">
+              <h1 className={`text-4xl font-black leading-[1.02] tracking-[-0.04em] sm:text-5xl lg:text-[4.1rem] ${darkMode ? "text-white" : "text-[#1cd87b]"}`}>
+                Santa Cruz <br />
+                es fútbol, es pasión, <br />
+                es <span className={darkMode ? "text-[#38e889]" : "text-[#1cd87b]"}>DeUna!</span>
+              </h1>
 
-          {/* Texto Principal */}
-          <div className="relative z-10 max-w-lg mt-auto lg:mt-12">
-            <h1 className="text-4xl lg:text-5xl font-extrabold text-white leading-tight">
-              Santa Cruz <br />
-              es fútbol, es pasión, <br />
-              es <span className="text-emerald-500">DeUna!</span>
-            </h1>
-            <p className="mt-4 text-gray-200 text-sm lg:text-base font-normal">
-              Encuentra canchas, arma tu partido y disfruta el juego con tus amigos.
-            </p>
-          </div>
+              <div className="mt-5 h-1.5 w-32 rounded-full bg-emerald-400/90" />
 
-          {/* Tarjetas Inferiores */}
-          <div className="relative z-10 grid grid-cols-1 sm:grid-cols-3 gap-3 mt-8">
-            <div className="bg-black/40 backdrop-blur-md p-4 rounded-2xl border border-white/10">
-              <span className="text-lg">⚽</span>
-              <h3 className="font-bold text-white text-sm mt-1">Canchas cerca de ti</h3>
-              <p className="text-xs text-gray-300 mt-0.5">Encuentra espacios deportivos disponibles.</p>
-            </div>
-
-            <div className="bg-black/40 backdrop-blur-md p-4 rounded-2xl border border-white/10">
-              <span className="text-lg">👥</span>
-              <h3 className="font-bold text-white text-sm mt-1">Organiza tu partido</h3>
-              <p className="text-xs text-gray-300 mt-0.5">Crea o únete a partidos abiertos.</p>
-            </div>
-
-            <div className="bg-black/40 backdrop-blur-md p-4 rounded-2xl border border-white/10">
-              <span className="text-lg">🍕</span>
-              <h3 className="font-bold text-white text-sm mt-1">Tercer Tiempo</h3>
-              <p className="text-xs text-gray-300 mt-0.5">Decide antes del partido si quieres participar y divide la cuota automáticamente.</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Columna Derecha: Formulario */}
-        <div className="lg:w-1/2 flex items-center justify-center p-6 sm:p-12 dark:bg-[#0b1320] bg-white">
-          <div className="w-full max-w-md space-y-6">
-            <div>
-              <h2 className="text-3xl font-bold dark:text-white text-gray-900">
-                Bienvenido a DeUna!
-              </h2>
-              <p className="text-sm dark:text-gray-400 text-gray-500 mt-1">
-                Inicia sesión para seguir jugando.
+              <p className={`mt-5 max-w-lg text-base sm:text-lg ${darkMode ? "text-white/80" : "text-white/90"}`}>
+                Encuentra las mejores canchas, arma tu partido y disfruta del tercer tiempo con tus amigos.
               </p>
             </div>
 
-            {/* Mensaje de Error en Pantalla */}
-            {errorMessage && (
-              <div className="p-3 bg-red-500/10 border border-red-500/40 rounded-xl text-red-400 text-xs font-medium flex items-center gap-2">
-                <span>⚠️</span>
-                <span>{errorMessage}</span>
+            <div className={`relative z-10 mt-6 flex items-center gap-3 rounded-2xl border px-4 py-3 backdrop-blur-[2px] ${darkMode ? "border-emerald-500/40 bg-[#0d1c1f]/45" : "border-white/40 bg-[#062f2f]/30"}`}>
+              <div className={`flex h-7 w-7 items-center justify-center rounded-full border ${darkMode ? "border-emerald-400/80 bg-[#0f2a2e]/80 text-emerald-300" : "border-emerald-300/80 bg-white/20 text-emerald-200"}`}>
+                <i className="fa-solid fa-location-dot text-xs" />
               </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Campo Correo */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold dark:text-gray-300 text-gray-700">
-                  Correo electrónico
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">✉️</span>
-                  <input
-                    type="email"
-                    required
-                    placeholder="Ingresa tu correo"
-                    className="w-full pl-10 pr-4 py-3 rounded-xl border dark:border-white/10 border-gray-200 dark:bg-[#131c2e] bg-gray-50 text-sm focus:outline-none focus:border-emerald-500 transition"
-                    value={formData.identifier}
-                    onChange={(e) => setFormData({ ...formData, identifier: e.target.value })}
-                  />
-                </div>
+              <div>
+                <div className="text-sm font-bold text-white">Estadio Tahuichi Aguilera</div>
+                <div className="text-xs text-white/75">Orullo de Santa Cruz</div>
               </div>
-
-              {/* Campo Contraseña */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold dark:text-gray-300 text-gray-700">
-                  Contraseña
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔒</span>
-                  <input
-                    type={showPassword ? "text" : "password"}
-                    required
-                    placeholder="Ingresa tu contraseña"
-                    className="w-full pl-10 pr-10 py-3 rounded-xl border dark:border-white/10 border-gray-200 dark:bg-[#131c2e] bg-gray-50 text-sm focus:outline-none focus:border-emerald-500 transition"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs"
-                  >
-                    {showPassword ? "👁️" : "👁️‍🗨️"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Checkbox & Olvidaste contraseña */}
-              <div className="flex items-center justify-between text-xs pt-1">
-                <label className="flex items-center gap-2 cursor-pointer dark:text-gray-300 text-gray-600">
-                  <input
-                    type="checkbox"
-                    checked={formData.rememberMe}
-                    onChange={(e) => setFormData({ ...formData, rememberMe: e.target.checked })}
-                    className="rounded dark:bg-[#131c2e] border-gray-300 text-emerald-500 focus:ring-emerald-500"
-                  />
-                  <span>Recordarme</span>
-                </label>
-                <a href="#" className="text-emerald-500 font-medium hover:underline">
-                  ¿Olvidaste tu contraseña?
-                </a>
-              </div>
-
-              {/* Botón Submit */}
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 font-bold text-white rounded-xl shadow-lg shadow-emerald-500/20 transition text-sm tracking-wide uppercase flex justify-center items-center"
-              >
-                {loading ? "VERIFICANDO..." : "INICIAR SESIÓN"}
-              </button>
-            </form>
-
-            {/* Separador */}
-            <div className="relative flex items-center justify-center my-6">
-              <div className="w-full border-t dark:border-white/10 border-gray-200"></div>
-              <span className="absolute px-3 text-[10px] uppercase tracking-wider dark:bg-[#0b1320] bg-white text-gray-400 font-medium">
-                O CONTINÚA CON
-              </span>
             </div>
 
-            {/* SSO Google */}
-            <button
-              type="button"
-              onClick={handleGoogleLogin}
-              className="w-full flex items-center justify-center gap-2 py-3 border dark:border-white/10 border-gray-200 rounded-xl dark:bg-[#131c2e] bg-white hover:bg-gray-50 dark:hover:bg-white/5 transition text-sm font-medium"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-              </svg>
-              <span>Continuar con Google</span>
-            </button>
-
-            {/* Pie del Formulario */}
-            <p className="text-center text-xs dark:text-gray-400 text-gray-500 pt-4">
-              ¿No tienes una cuenta?{" "}
-              <Link href="/register" className="text-emerald-500 font-semibold hover:underline">
-                Regístrate aquí
-              </Link>
-            </p>
+            <div className="relative z-10 mt-8 grid gap-3 sm:grid-cols-3">
+              {[
+                { icon: "fa-location-dot", text: "Canchas cerca de ti", desc: "Busca por ubicación o sector" },
+                { icon: "fa-users", text: "Organiza tu partido", desc: "Invita jugadores, reserva y confirma" },
+                { icon: "fa-clock", text: "Tercer tiempo", desc: "Comparte el lugar y divide gastos" },
+              ].map((item) => (
+                <div key={item.text} className={`rounded-2xl border p-3 backdrop-blur-sm sm:p-4 ${featureCard}`}>
+                  <div className={`mb-2 flex h-10 w-10 items-center justify-center rounded-full ${darkMode ? "bg-emerald-500/10 text-emerald-300" : "bg-emerald-100 text-emerald-700"}`}>
+                    <i className={`fa-solid ${item.icon}`} />
+                  </div>
+                  <h3 className="text-sm font-bold sm:text-base">{item.text}</h3>
+                  <p className={`mt-1 text-xs leading-relaxed ${darkMode ? "opacity-80" : "opacity-80"}`}>{item.desc}</p>
+                </div>
+              ))}
+            </div>
           </div>
+        </section>
+
+        <section className={`flex w-full items-center justify-center rounded-[28px] border p-4 sm:p-6 lg:w-[42%] lg:p-8 ${panelClass}`}>
+          <div className="w-full max-w-[540px]">
+            <div className="mb-6 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`flex h-14 w-14 items-center justify-center rounded-full border-2 ${darkMode ? "border-emerald-500/80 bg-[#0b1a1d]" : "border-emerald-500 bg-[#dff9ee]"}`}>
+                  <i className="fa-solid fa-futbol text-2xl text-emerald-500" />
+                </div>
+                <div>
+                  <h2 className={`text-3xl font-black tracking-tight ${darkMode ? "text-white" : "text-[#12312d]"}`}>DeUna!</h2>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div>
+                <h3 className={`text-3xl font-black tracking-tight sm:text-[2.5rem] ${darkMode ? "text-white" : "text-[#12312d]"}`}>
+                  Bienvenido a DeUna!
+                </h3>
+                <p className={`mt-2 text-sm sm:text-base ${mutedText}`}>
+                  Inicia sesión para seguir jugando
+                </p>
+              </div>
+
+              {errorMessage && (
+                <div className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+                  <i className="fa-solid fa-triangle-exclamation mr-2" />
+                  {errorMessage}
+                </div>
+              )}
+
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="space-y-2">
+                  <label className={`text-sm font-semibold ${mutedText}`}>
+                    Correo electrónico o usuario
+                  </label>
+                  <div className="relative">
+                    <span className={`absolute left-4 top-1/2 -translate-y-1/2 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      <i className="fa-solid fa-user" />
+                    </span>
+                    <input
+                      type="email"
+                      required
+                      value={formData.identifier}
+                      onChange={(e) => setFormData({ ...formData, identifier: e.target.value })}
+                      placeholder="Correo electrónico o usuario"
+                      className={`w-full rounded-xl border py-3 pl-11 pr-3 text-sm outline-none focus:border-emerald-500 ${inputClass}`}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className={`text-sm font-semibold ${mutedText}`}>
+                    Contraseña
+                  </label>
+                  <div className="relative">
+                    <span className={`absolute left-4 top-1/2 -translate-y-1/2 ${darkMode ? "text-slate-400" : "text-slate-500"}`}>
+                      <i className="fa-solid fa-lock" />
+                    </span>
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      placeholder="Contraseña"
+                      className={`w-full rounded-xl border py-3 pl-11 pr-11 text-sm outline-none focus:border-emerald-500 ${inputClass}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className={`absolute right-4 top-1/2 -translate-y-1/2 ${darkMode ? "text-slate-400" : "text-slate-500"}`}
+                    >
+                      <i className={`fa-solid ${showPassword ? "fa-eye-slash" : "fa-eye"}`} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-4 text-sm">
+                  <label className={`flex cursor-pointer items-center gap-2 ${darkMode ? "text-white/80" : "text-[#12312d]"}`}>
+                    <input
+                      type="checkbox"
+                      checked={formData.rememberMe}
+                      onChange={(e) => setFormData({ ...formData, rememberMe: e.target.checked })}
+                      className="h-4 w-4 rounded border-emerald-500 bg-transparent text-emerald-500 focus:ring-emerald-500"
+                    />
+                    <span>Recordarme</span>
+                  </label>
+
+                  <Link href="#" className="font-semibold text-emerald-500 hover:underline">
+                    ¿Olvidaste tu contraseña?
+                  </Link>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex w-full items-center justify-center gap-3 rounded-xl bg-emerald-500 px-4 py-3.5 text-base font-bold text-white shadow-lg shadow-emerald-500/25 hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {loading ? "Verificando..." : "Iniciar sesión"}
+                  <i className="fa-solid fa-arrow-right" />
+                </button>
+              </form>
+
+              <div className={`relative my-5 flex items-center justify-center ${darkMode ? "text-white/70" : "text-[#1e3b39]"}`}>
+                <div className={`h-px w-full ${darkMode ? "bg-white/10" : "bg-[#dfe9e6]"}`} />
+                <span className={`absolute bg-transparent px-3 text-[10px] font-semibold uppercase tracking-[0.2em] ${darkMode ? "text-white/70" : "text-[#1e3b39]"}`}>
+                  O continúa con
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className={`flex w-full items-center justify-center gap-3 rounded-xl border px-4 py-3 text-sm font-semibold ${socialButtonClass}`}
+              >
+                <i className="fa-brands fa-google text-red-500" />
+                <span>Continuar con Google</span>
+              </button>
+
+              <div className={`flex items-center justify-center gap-2 pt-2 text-sm ${darkMode ? "text-white/75" : "text-[#12312d]"}`}>
+                <span>¿No tienes cuenta?</span>
+                <Link href="/register" className="font-bold text-emerald-500 hover:underline">
+                  Regístrate aquí
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer className={`mx-auto flex w-full max-w-[1600px] items-center justify-between gap-4 border-t px-4 py-5 text-sm sm:px-6 lg:px-8 ${pageFooterClass}`}>
+        <div className="flex items-center gap-3 font-black text-3xl tracking-tight">
+          <div className={`flex h-8 w-8 items-center justify-center rounded-full ${darkMode ? "bg-[#0b191d]" : "bg-[#e3f2ea]"}`}>
+            <i className="fa-solid fa-futbol text-xl text-[#1bbf6a]" />
+          </div>
+          <span className={lightBrand}>DeUna!</span>
         </div>
 
-      </main>
+        <div className={`hidden items-center gap-2 text-sm md:flex ${darkMode ? "text-white/70" : "text-[#12312d]"}`}>
+          <span>© 2025 DeUna! Todos los derechos reservados.</span>
+        </div>
+
+        <div className={`flex items-center gap-4 text-sm ${darkMode ? "text-white/70" : "text-[#12312d]"}`}>
+          <span>Términos y condiciones</span>
+          <span>Política de privacidad</span>
+          <span>Soporte</span>
+        </div>
+      </footer>
     </div>
   );
 }
