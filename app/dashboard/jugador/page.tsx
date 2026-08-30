@@ -1,528 +1,463 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import React, { useState, useEffect } from "react";
 import { createClient } from "@/app/lib/supabase/client";
 
 interface Cancha {
   id_cancha: number;
-  id_propietario: number;
   nombre: string;
-  ubicacion: string; // Ej: https://www.google.com/maps?q=-17.7833,-63.1821
-  direccion_texto?: string; // Ej: Calle Andres Ibañez, frente a la corte electoral
-  tipo_juego: string;
   precio: number;
+  ubicacion: string;
   imagen: string;
-  estado: string;
+  tipo_juego?: string;
   calificacion?: number;
-  distanciaKm?: number;
-  // Campos para control de jugadores y horarios
-  jugadores_actuales?: number;
-  max_jugadores?: number;
-  hora_inicio?: string;
-  hora_fin?: string;
+  distancia_km?: number;
 }
 
-export default function JugadorDashboardPage() {
-  const router = useRouter();
+interface DisponibilidadCancha {
+  id_disponibilidad: number;
+  id_cancha: number;
+  dia_semana: string;
+  hora_inicio: string;
+  hora_fin: string;
+  esta_ocupada: boolean;
+  jugadores_inscritos?: number; // Cantidad actual de inscritos
+  min_jugadores?: number;      // Mínimo para completar (ej. 10 o 11)
+  max_jugadores?: number;      // Cupo máximo (ej. 14)
+  cancha?: Cancha;
+}
+
+interface PerfilUsuario {
+  dias_preferidos: string[];
+  hora_inicio_preferida: string;
+  hora_fin_preferida: string;
+}
+
+export default function DashboardPage() {
   const supabase = createClient();
-  const [canchas, setCanchas] = useState<Cancha[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
 
-  // Estados de Geolocalización
-  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [loadingLocation, setLoadingLocation] = useState(false);
-  const [geoError, setGeoError] = useState<string | null>(null);
-
-  // Carrusel
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-
-  // 1. Verificar sesión activa al cargar
-  useEffect(() => {
-    const sessionString = localStorage.getItem("userSession");
-    if (!sessionString) {
-      router.replace("/login");
-    }
-  }, [router]);
-
-  // 2. Extraer latitud y longitud de diferentes formatos de URL de Google Maps
-  const extraerCoordsDeUrl = (url: string) => {
-    if (!url) return null;
-
-    const regexStandard = /(?:q=|@)(-?\d+\.\d+),\s*(-?\d+\.\d+)/;
-    const matchStandard = url.match(regexStandard);
-    if (matchStandard) {
-      return {
-        lat: parseFloat(matchStandard[1]),
-        lng: parseFloat(matchStandard[2]),
-      };
-    }
-
-    const regexDirect = /(-?\d+\.\d+),\s*(-?\d+\.\d+)/;
-    const matchDirect = url.match(regexDirect);
-    if (matchDirect) {
-      return {
-        lat: parseFloat(matchDirect[1]),
-        lng: parseFloat(matchDirect[2]),
-      };
-    }
-
-    return null;
-  };
-
-  // 3. Cálculo de distancia en KM mediante fórmula Haversine
-  const calcularDistancia = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return Number((R * c).toFixed(1));
-  };
-
-  // 4. Solicitar permiso GPS al navegador
-  const pedirUbicacion = () => {
-    if (!navigator.geolocation) {
-      setGeoError("Tu navegador no soporta geolocalización.");
-      return;
-    }
-
-    setLoadingLocation(true);
-    setGeoError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setUserLocation({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setLoadingLocation(false);
-      },
-      (error) => {
-        setLoadingLocation(false);
-        if (error.code === error.PERMISSION_DENIED) {
-          setGeoError("Permiso de ubicación denegado. Actívalo en los ajustes de tu navegador.");
-        } else {
-          setGeoError("No se pudo obtener tu ubicación actual.");
-        }
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  };
-
-  useEffect(() => {
-    pedirUbicacion();
-    cargarCanchas();
-
-    const canalRealtime = supabase
-      .channel("canchas-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "cancha" },
-        () => cargarCanchas()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(canalRealtime);
-    };
-  }, []);
-
-  async function cargarCanchas() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("cancha")
-      .select("*")
-      .eq("estado", "Verificada");
-
-    if (error) {
-      console.error("Error al cargar canchas:", error);
-    } else if (data) {
-      const formatted = data.map((item, idx) => ({
-        ...item,
-        calificacion: Number((4.3 + (idx % 5) * 0.15).toFixed(1)),
-        // Valores por defecto si aún no existen en tu DB
-        jugadores_actuales: item.jugadores_actuales ?? 11,
-        max_jugadores: item.max_jugadores ?? 14,
-        hora_inicio: item.hora_inicio || "16:00",
-        hora_fin: item.hora_fin || "17:00",
-        direccion_texto: item.direccion_texto || "Calle Andres Ibañez, frente a la corte electoral",
-      }));
-      setCanchas(formatted);
-    }
-    setLoading(false);
-  }
-
-  // 5. Mapear canchas calculando distancia y ordenándolas
-  const canchasProcesadas = canchas
-    .map((cancha) => {
-      const coords = extraerCoordsDeUrl(cancha.ubicacion);
-      let distanciaKm: number | undefined = undefined;
-
-      if (userLocation && coords) {
-        distanciaKm = calcularDistancia(
-          userLocation.lat,
-          userLocation.lng,
-          coords.lat,
-          coords.lng
-        );
-      }
-      return { ...cancha, distanciaKm };
-    })
-    .sort((a, b) => {
-      if (a.distanciaKm === undefined) return 1;
-      if (b.distanciaKm === undefined) return -1;
-      return a.distanciaKm - b.distanciaKm;
-    });
-
-  const destacadas = [...canchasProcesadas]
-    .sort((a, b) => (b.calificacion || 0) - (a.calificacion || 0))
-    .slice(0, 5);
-
-  useEffect(() => {
-    if (destacadas.length === 0) return;
-    const interval = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % destacadas.length);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [destacadas.length]);
-
-  const scrollDerecha = () => scrollContainerRef.current?.scrollBy({ left: 320, behavior: "smooth" });
-  const scrollIzquierda = () => scrollContainerRef.current?.scrollBy({ left: -320, behavior: "smooth" });
-
-  const getImagenUrl = (src?: string) => {
-    if (!src || src.trim() === "") {
-      return "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=800&auto=format&fit=crop&q=60";
-    }
-    return src;
-  };
-
-  // Obtener fecha actual formateada (Ej: Hoy · Domingo 30 de agosto)
-  const fechaHoy = new Date().toLocaleDateString("es-ES", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
+  const [perfil, setPerfil] = useState<PerfilUsuario>({
+    dias_preferidos: ["Sábado", "Domingo", "Lunes"],
+    hora_inicio_preferida: "16:00",
+    hora_fin_preferida: "22:00",
   });
 
+  const [todosLosTurnos, setTodosLosTurnos] = useState<DisponibilidadCancha[]>([]);
+  const [mejoresRecomendados, setMejoresRecomendados] = useState<DisponibilidadCancha[]>([]);
+  const [masCercanosEnTiempo, setMasCercanosEnTiempo] = useState<DisponibilidadCancha[]>([]);
+  const [porDiasPreferidos, setPorDiasPreferidos] = useState<DisponibilidadCancha[]>([]);
+  const [porHorariosPreferidos, setPorHorariosPreferidos] = useState<DisponibilidadCancha[]>([]);
+
+  const diasSemana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+
+  useEffect(() => {
+    cargarDatos();
+  }, []);
+
+  async function cargarDatos() {
+    setLoading(true);
+    try {
+      const { data: userAuth } = await supabase.auth.getUser();
+      if (userAuth?.user) {
+        const { data: perfilData } = await supabase
+          .from("perfil")
+          .select("dias_preferidos, hora_inicio_preferida, hora_fin_preferida")
+          .eq("id_usuario", userAuth.user.id)
+          .maybeSingle();
+
+        if (perfilData) {
+          setPerfil({
+            dias_preferidos: perfilData.dias_preferidos || ["Sábado", "Domingo", "Lunes"],
+            hora_inicio_preferida: perfilData.hora_inicio_preferida || "16:00",
+            hora_fin_preferida: perfilData.hora_fin_preferida || "22:00",
+          });
+        }
+      }
+
+      const { data, error } = await supabase
+        .from("disponibilidaddecancha")
+        .select(`
+          id_disponibilidad,
+          id_cancha,
+          dia_semana,
+          hora_inicio,
+          hora_fin,
+          esta_ocupada,
+          cancha (
+            id_cancha,
+            nombre,
+            precio,
+            ubicacion,
+            imagen,
+            tipo_juego
+          )
+        `)
+        .eq("esta_ocupada", false);
+
+      if (error) {
+        console.error("Error al obtener disponibilidades:", error.message);
+        setTodosLosTurnos([]);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const turnos = data as unknown as DisponibilidadCancha[];
+        setTodosLosTurnos(turnos);
+        procesarSecciones(turnos, perfil);
+      } else {
+        setTodosLosTurnos([]);
+      }
+    } catch (err) {
+      console.error("Error inesperado en Dashboard:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function procesarSecciones(turnos: DisponibilidadCancha[], userPerfil: PerfilUsuario) {
+    const normalizarHora = (h: string) => (h ? h.substring(0, 5) : "00:00");
+    const horaActual = new Date().toTimeString().substring(0, 5);
+
+    const recomendadosPonderados = turnos.map((t) => {
+      let score = 0;
+      const hInicio = normalizarHora(t.hora_inicio);
+
+      const coincideDia = userPerfil.dias_preferidos.some(
+        (d) => d.toLowerCase() === (t.dia_semana || "").toLowerCase()
+      );
+      if (coincideDia) score += 35;
+
+      if (hInicio >= userPerfil.hora_inicio_preferida && hInicio <= userPerfil.hora_fin_preferida) {
+        score += 25;
+      }
+
+      if (hInicio >= horaActual) {
+        score += 20;
+      }
+
+      const rating = t.cancha?.calificacion || 4.5;
+      score += rating * 5;
+
+      const dist = t.cancha?.distancia_km || 3.0;
+      if (dist <= 3) score += 15;
+      else if (dist <= 7) score += 8;
+
+      return { turno: t, score };
+    });
+
+    const ordenadosPorScore = recomendadosPonderados
+      .sort((a, b) => b.score - a.score)
+      .map((item) => item.turno);
+
+    setMejoresRecomendados(ordenadosPorScore.slice(0, 5));
+
+    const cercanos = [...turnos]
+      .sort((a, b) => normalizarHora(a.hora_inicio).localeCompare(normalizarHora(b.hora_inicio)))
+      .slice(0, 10);
+    setMasCercanosEnTiempo(cercanos);
+
+    const porDias = turnos.filter((t) =>
+      userPerfil.dias_preferidos.some(
+        (d) => d.toLowerCase() === (t.dia_semana || "").toLowerCase()
+      )
+    );
+    setPorDiasPreferidos(porDias.length > 0 ? porDias : turnos);
+
+    const porHorarios = turnos.filter((t) => {
+      const h = normalizarHora(t.hora_inicio);
+      return h >= userPerfil.hora_inicio_preferida && h <= userPerfil.hora_fin_preferida;
+    });
+    setPorHorariosPreferidos(porHorarios.length > 0 ? porHorarios : turnos);
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center text-sm font-bold text-emerald-400">
+        Cargando partidos disponibles...
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-8 text-white pb-12">
-      {/* Encabezado */}
-      <header className="rounded-2xl bg-white/5 border border-white/10 p-6 backdrop-blur-md">
-        <h1 className="text-3xl font-black text-white flex items-center gap-2">
-          ⚽ Panel del Jugador
-        </h1>
-        <p className="text-sm font-medium text-slate-400 mt-1">
-          Encuentra tu cancha ideal, revisa las mejor valoradas y reserva en segundos.
+    <div className="mx-auto max-w-7xl space-y-10 p-6 text-slate-100">
+      <div>
+        <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+          DEUNA !
+        </span>
+        <h1 className="text-3xl font-black text-white">Partidos Disponibles</h1>
+        <p className="text-xs text-slate-400">
+          Encuentra la cancha ideal adaptada a tus días, horarios y preferencias.
         </p>
-      </header>
-
-      {/* Banner de Estado GPS */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-white/10 p-4 rounded-2xl">
-        <div className="text-xs">
-          {loadingLocation ? (
-            <span className="text-amber-400 font-semibold animate-pulse flex items-center gap-2">
-              📡 Solicitando permiso de ubicación...
-            </span>
-          ) : userLocation ? (
-            <span className="text-emerald-400 font-semibold flex items-center gap-2">
-              🎯 Ubicación obtenida. Canchas ordenadas por cercanía.
-            </span>
-          ) : (
-            <span className="text-slate-400">
-              Activa tu ubicación para calcular los kilómetros exactos a cada cancha.
-            </span>
-          )}
-          {geoError && <p className="text-red-400 mt-1">{geoError}</p>}
-        </div>
-
-        {!userLocation && (
-          <button
-            onClick={pedirUbicacion}
-            className="text-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold px-3 py-2 rounded-xl transition"
-          >
-            Activar Ubicación
-          </button>
-        )}
       </div>
 
-      {/* 🌟 1. CANCHAS DESTACADAS */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold tracking-tight text-amber-400 flex items-center gap-2">
-            ⭐ Canchas Destacadas del Mes
-          </h2>
-          <span className="text-xs text-slate-400">Top 5 mejor valoradas</span>
-        </div>
-
-        {loading ? (
-          <div className="h-72 w-full animate-pulse rounded-3xl bg-slate-800/60" />
-        ) : destacadas.length > 0 ? (
-          <div className="relative h-80 sm:h-96 w-full overflow-hidden rounded-3xl bg-slate-900 shadow-2xl border border-white/10 group">
-            <div className="absolute inset-0 flex transition-transform duration-700 ease-in-out">
-              <img
-                src={getImagenUrl(destacadas[currentIndex]?.imagen)}
-                alt={destacadas[currentIndex]?.nombre}
-                className="absolute right-0 top-0 h-full w-full sm:w-2/3 object-cover object-center filter brightness-90"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).src =
-                    "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=1200&auto=format&fit=crop&q=80";
-                }}
-              />
-              <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/85 to-transparent sm:w-3/4" />
-            </div>
-
-            <div className="relative z-10 flex h-full flex-col justify-between p-6 sm:p-10 max-w-lg">
-              <div className="space-y-2">
-                <span className="inline-block rounded-full bg-amber-500/20 px-3 py-1 text-xs font-bold text-amber-400 border border-amber-500/30">
-                  ★ {destacadas[currentIndex]?.calificacion} / 5.0 Destacada
-                </span>
-                <h3 className="text-3xl sm:text-4xl font-black text-white leading-tight">
-                  {destacadas[currentIndex]?.nombre}
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-300">
-                  ⚽ {destacadas[currentIndex]?.tipo_juego} | 💰 Bs. {destacadas[currentIndex]?.precio} / hr
-                </p>
-                {destacadas[currentIndex]?.distanciaKm !== undefined && (
-                  <p className="text-xs font-bold text-emerald-400">
-                    📍 A {destacadas[currentIndex]?.distanciaKm} km de ti
-                  </p>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3">
-                <a
-                  href={destacadas[currentIndex]?.ubicacion || "#"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-xl bg-emerald-500 px-6 py-3 text-xs font-black text-slate-950 hover:bg-emerald-400 transition"
-                >
-                  Ver en Google Maps
-                </a>
-              </div>
-            </div>
-
-            <div className="absolute bottom-4 right-6 z-20 flex gap-2">
-              {destacadas.map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => setCurrentIndex(idx)}
-                  className={`h-2.5 rounded-full transition-all ${
-                    idx === currentIndex ? "w-8 bg-emerald-400" : "w-2.5 bg-white/40 hover:bg-white"
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl bg-white/5 p-6 text-center text-xs text-slate-400">
-            No hay canchas verificadas para mostrar.
-          </div>
-        )}
-      </section>
-
-      {/* 📍 2. CANCHAS CERCANAS (CARRUSEL HORIZONTAL POR DISTANCIA) */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold text-white">📍 Canchas Cercanas a tu Ubicación</h2>
-            <p className="text-xs text-slate-400">Ordenadas de la más cercana a la más lejana</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={scrollIzquierda}
-              className="rounded-full bg-white/10 p-2.5 text-white hover:bg-white/20 transition"
-            >
-              ❮
-            </button>
-            <button
-              onClick={scrollDerecha}
-              className="rounded-full bg-emerald-500/20 border border-emerald-500/40 p-2.5 text-emerald-400 hover:bg-emerald-500 hover:text-slate-950 transition"
-            >
-              ❯
-            </button>
-          </div>
-        </div>
-
-        <div
-          ref={scrollContainerRef}
-          className="flex gap-4 overflow-x-auto scroll-smooth pb-4"
-          style={{ scrollbarWidth: "none" }}
-        >
-          {canchasProcesadas.map((cancha) => (
-            <div
-              key={cancha.id_cancha}
-              className="min-w-[260px] sm:min-w-[300px] max-w-[300px] flex-shrink-0 rounded-2xl bg-white/5 border border-white/10 overflow-hidden hover:border-emerald-500/50 transition flex flex-col justify-between"
-            >
-              <div className="relative h-40 w-full bg-slate-800">
-                <img
-                  src={getImagenUrl(cancha.imagen)}
-                  alt={cancha.nombre}
-                  className="h-full w-full object-cover"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).src =
-                      "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=600&auto=format&fit=crop&q=60";
-                  }}
-                />
-                <span className="absolute top-2 right-2 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-amber-400">
-                  ★ {cancha.calificacion}
-                </span>
-              </div>
-
-              <div className="p-4 space-y-3 flex-1 flex flex-col justify-between">
-                <div>
-                  <h3 className="font-bold text-white text-base truncate">{cancha.nombre}</h3>
-                  <p className="text-xs text-slate-400 mt-1">⚽ {cancha.tipo_juego}</p>
-                  <p className="text-xs font-semibold text-emerald-400 mt-0.5">
-                    Bs. {cancha.precio} / hr
-                  </p>
-                  <div className="mt-2">
-                    {cancha.distanciaKm !== undefined ? (
-                      <span className="inline-block bg-emerald-500/20 text-emerald-400 text-[11px] font-bold px-2 py-0.5 rounded border border-emerald-500/30">
-                        📍 A {cancha.distanciaKm} km
-                      </span>
-                    ) : (
-                      <span className="text-[11px] text-slate-500">Distancia no calculada</span>
-                    )}
-                  </div>
-                </div>
-
-                <a
-                  href={cancha.ubicacion}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full text-center block rounded-xl bg-white/10 hover:bg-emerald-600 text-xs font-bold py-2 transition text-slate-200"
-                >
-                  Ver Mapa
-                </a>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* 📋 3. TODAS LAS CANCHAS DISPONIBLES (TARJETAS ESTILO FIGMA / MOSTRADAS EN LA IMAGEN) */}
-      <section className="space-y-4 pt-4 border-t border-white/10">
-        <div>
-          {/* Cabecera del día */}
-          <div className="inline-block border-b-2 border-[#f95721] pb-1 mb-2">
-            <h2 className="text-lg font-bold text-white capitalize">
-              Hoy · {fechaHoy}
-            </h2>
-          </div>
-          <p className="text-xs text-slate-400">
-            Selecciona una cancha o unite a un partido en curso
+      {todosLosTurnos.length === 0 ? (
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-12 text-center text-slate-400">
+          <p className="text-base font-bold text-white">No hay partidos ni turnos disponibles en la BD.</p>
+          <p className="text-xs text-slate-500 mt-1">
+            Configura disponibilidades en tus canchas (asegurándote de que "esta_ocupada" sea false) para ver los partidos aquí.
           </p>
         </div>
+      ) : (
+        <>
+          <section className="space-y-4">
+            <HeroCarousel recomendados={mejoresRecomendados} />
+          </section>
 
-        {loading ? (
-          <p className="text-xs text-slate-400 animate-pulse">Cargando canchas...</p>
-        ) : canchasProcesadas.length === 0 ? (
-          <div className="rounded-2xl bg-white/5 p-8 text-center text-xs text-slate-400">
-            No hay canchas con estado "Verificada" en la base de datos.
-          </div>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {canchasProcesadas.map((cancha) => {
-              const actuales = cancha.jugadores_actuales ?? 0;
-              const maximos = cancha.max_jugadores ?? 14;
-              const porcentaje = Math.min(Math.round((actuales / maximos) * 100), 100);
+          <section className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-emerald-400 text-lg">⚡</span>
+                <h2 className="text-lg font-bold text-white">
+                  Próximos a jugarse (Más cercanos en tiempo)
+                </h2>
+              </div>
+              <span className="text-xs text-slate-400 hidden sm:block">Desliza para ver más →</span>
+            </div>
+            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
+              {masCercanosEnTiempo.map((item) => (
+                <TarjetaPartido key={item.id_disponibilidad} item={item} />
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-blue-400 text-lg">📅</span>
+              <h2 className="text-lg font-bold text-white">
+                Partidos en tus Días Preferidos ({perfil.dias_preferidos.join(", ")})
+              </h2>
+            </div>
+            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
+              {porDiasPreferidos.map((item) => (
+                <TarjetaPartido key={item.id_disponibilidad} item={item} />
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-purple-400 text-lg">⏰</span>
+              <h2 className="text-lg font-bold text-white">
+                Partidos en tus Horarios Preferidos ({perfil.hora_inicio_preferida} - {perfil.hora_fin_preferida})
+              </h2>
+            </div>
+            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
+              {porHorariosPreferidos.map((item) => (
+                <TarjetaPartido key={item.id_disponibilidad} item={item} />
+              ))}
+            </div>
+          </section>
+
+          <section className="space-y-8 pt-4 border-t border-slate-800">
+            <h2 className="text-xl font-extrabold text-white">🗓️ Partidos Organizados por Día</h2>
+            {diasSemana.map((dia) => {
+              const turnosDelDia = todosLosTurnos.filter(
+                (t) => (t.dia_semana || "").toLowerCase() === dia.toLowerCase()
+              );
+
+              if (turnosDelDia.length === 0) return null;
 
               return (
-                <div
-                  key={cancha.id_cancha}
-                  className="bg-[#1c1f22] border border-white/5 rounded-2xl p-4 flex gap-4 items-center text-white hover:border-[#f95721]/40 transition cursor-pointer"
-                  onClick={() => alert(`Reservar o unirse a: ${cancha.nombre}`)}
-                >
-                  {/* Imagen cuadrada a la izquierda */}
-                  <div className="relative w-28 h-28 sm:w-36 sm:h-36 flex-shrink-0 rounded-xl overflow-hidden bg-slate-800">
-                    <img
-                      src={getImagenUrl(cancha.imagen)}
-                      alt={cancha.nombre}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src =
-                          "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=600&auto=format&fit=crop&q=60";
-                      }}
-                    />
-                    {cancha.distanciaKm !== undefined && (
-                      <span className="absolute bottom-1 left-1 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[10px] font-bold text-emerald-400">
-                        📍 {cancha.distanciaKm} km
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Detalle y Métricas a la derecha */}
-                  <div className="flex-1 min-w-0 space-y-1.5">
-                    {/* Título */}
-                    <h3 className="text-base sm:text-lg font-bold text-white leading-tight truncate">
-                      {cancha.nombre}
-                    </h3>
-
-                    {/* Dirección */}
-                    <div className="flex items-start gap-1.5 text-xs text-slate-400">
-                      <span className="text-[#f95721] text-sm leading-none mt-0.5">📍</span>
-                      <span className="line-clamp-1">
-                        {cancha.direccion_texto || "Dirección no especificada"}
-                      </span>
-                    </div>
-
-                    {/* Deporte */}
-                    <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                      <span className="text-[#f95721] text-sm leading-none">🏟️</span>
-                      <span>{cancha.tipo_juego || "Fútbol"}</span>
-                    </div>
-
-                    {/* Rango de Horario */}
-                    <div className="flex items-center gap-1.5 text-xs sm:text-sm font-semibold pt-0.5">
-                      <span className="text-[#f95721] text-base leading-none">🕒</span>
-                      <span>
-                        <strong className="text-white font-bold text-sm sm:text-base">
-                          {cancha.hora_inicio || "16:00"}
-                        </strong>
-                        <span className="text-slate-400 font-normal">
-                          {" "}— {cancha.hora_fin || "17:00"}hs
-                        </span>
-                      </span>
-                    </div>
-
-                    {/* Precio y Progreso de Jugadores Registrados */}
-                    <div className="flex items-center justify-between pt-1">
-                      {/* Precio */}
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-[#f95721] font-bold text-xs sm:text-sm">Bs</span>
-                        <span className="text-white font-bold text-base sm:text-lg">
-                          {cancha.precio ? Number(cancha.precio).toFixed(2) : "0.00"}
-                        </span>
-                      </div>
-
-                      {/* Contador de Jugadores + Barra */}
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[#f95721] text-base leading-none">👥</span>
-                        <div className="w-12 sm:w-16 h-2 bg-slate-700/60 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-[#f95721] rounded-full transition-all duration-300"
-                            style={{ width: `${porcentaje}%` }}
-                          />
-                        </div>
-                        <span className="text-xs font-bold text-slate-300">
-                          {actuales}-{maximos}
-                        </span>
-                      </div>
-                    </div>
+                <div key={dia} className="space-y-3">
+                  <h3 className="text-md font-bold text-amber-500 uppercase tracking-wide">{dia}</h3>
+                  <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
+                    {turnosDelDia.map((item) => (
+                      <TarjetaPartido key={item.id_disponibilidad} item={item} />
+                    ))}
                   </div>
                 </div>
               );
             })}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HeroCarousel({ recomendados }: { recomendados: DisponibilidadCancha[] }) {
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    if (recomendados.length <= 1) return;
+    const interval = setInterval(() => {
+      setIndex((prev) => (prev + 1) % recomendados.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [recomendados]);
+
+  if (!recomendados || recomendados.length === 0) return null;
+
+  const actual = recomendados[index];
+  const cancha = actual.cancha;
+  const imagenMostrar =
+    cancha?.imagen ||
+    "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80";
+
+  return (
+    <div className="relative w-full overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl">
+      <div className="relative h-[380px] sm:h-[440px] w-full">
+        <img
+          src={imagenMostrar}
+          alt={cancha?.nombre || "Cancha"}
+          className="h-full w-full object-cover transition-all duration-700 ease-in-out"
+        />
+
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/50 to-transparent" />
+
+        <div className="absolute bottom-0 left-0 z-20 p-6 sm:p-10 max-w-2xl space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-amber-500/20 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wider text-amber-400 border border-amber-500/30 backdrop-blur-md">
+              ⭐ Recomendado Ideal
+            </span>
+            <span className="rounded-md bg-blue-500/20 px-2.5 py-1 text-[11px] font-bold text-blue-400 border border-blue-500/30 backdrop-blur-md">
+              ⭐ {cancha?.calificacion || "4.8"} / 5.0
+            </span>
+            <span className="rounded-md bg-emerald-500/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 border border-emerald-500/30 backdrop-blur-md">
+              📍 {cancha?.distancia_km ? `${cancha.distancia_km} km de ti` : "Cerca de tu ubicación"}
+            </span>
           </div>
-        )}
-      </section>
+
+          <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-none">
+            {cancha?.nombre || "Cancha Deportiva"}
+          </h1>
+
+          <p className="text-sm sm:text-base font-semibold text-slate-300">
+            {actual.dia_semana} • Horario: {actual.hora_inicio?.substring(0, 5)} - {actual.hora_fin?.substring(0, 5)} hs
+          </p>
+
+          <p className="text-xs text-slate-400 line-clamp-1">
+            📍 {cancha?.ubicacion || "Santa Cruz, Bolivia"}
+          </p>
+
+          <div className="flex items-center gap-4 pt-3">
+            <div>
+              <span className="block text-[10px] uppercase font-bold text-slate-400">Precio / Turno</span>
+              <span className="text-xl font-black text-white">
+                Bs. {cancha?.precio || "--"}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => alert(`Uniéndose al turno ID: ${actual.id_disponibilidad}`)}
+              className="rounded-xl bg-[#f95721] px-6 py-3 text-xs sm:text-sm font-extrabold text-white transition hover:bg-[#e04816] active:scale-95 shadow-lg shadow-[#f95721]/30"
+            >
+              Unirse ahora
+            </button>
+          </div>
+        </div>
+
+        <div className="absolute bottom-4 right-6 z-30 flex gap-2">
+          {recomendados.map((_, idx) => (
+            <button
+              key={idx}
+              onClick={() => setIndex(idx)}
+              className={`h-2 rounded-full transition-all duration-300 ${
+                index === idx ? "w-8 bg-[#f95721]" : "w-2 bg-slate-600/60 hover:bg-slate-400"
+              }`}
+              aria-label={`Ver recomendación ${idx + 1}`}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TarjetaPartido({
+  item,
+  destacada = false,
+}: {
+  item: DisponibilidadCancha;
+  destacada?: boolean;
+}) {
+  const formatearHora = (hora: string) => (hora ? hora.substring(0, 5) : "--:--");
+  
+  const imagenMostrar =
+    item.cancha?.imagen ||
+    "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=600&q=80";
+
+  // Datos simulados si aún no vienen de la base de datos
+  const inscritos = item.jugadores_inscritos ?? 11;
+  const maximo = item.max_jugadores ?? 14;
+  const porcentaje = Math.min(Math.round((inscritos / maximo) * 100), 100);
+
+  return (
+    <div
+      className={`min-w-[320px] max-w-[320px] flex-shrink-0 flex flex-col justify-between rounded-2xl border ${
+        destacada
+          ? "border-amber-500/50 bg-slate-900 shadow-amber-500/10"
+          : "border-slate-800 bg-slate-900/90"
+      } p-4 shadow-xl transition hover:border-slate-700`}
+    >
+      <div className="space-y-3">
+        <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-800">
+          <img
+            src={imagenMostrar}
+            alt={item.cancha?.nombre || "Cancha"}
+            className="h-full w-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent z-10" />
+          
+          <div className="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-lg bg-black/70 px-2 py-0.5 text-[10px] font-bold text-emerald-400 backdrop-blur-md border border-emerald-500/30">
+            {item.cancha?.tipo_juego || "Fútbol"}
+          </div>
+          
+          <div className="absolute bottom-2 left-2 z-20 text-[10px] font-semibold text-slate-300">
+            📍 {item.cancha?.ubicacion || "Sin ubicación registrada"}
+          </div>
+        </div>
+
+        <div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500">
+            {item.dia_semana}
+          </span>
+          <h3 className="text-base font-extrabold text-white truncate">
+            {item.cancha?.nombre || `Cancha #${item.id_cancha}`}
+          </h3>
+          <p className="text-sm font-bold text-emerald-400 mt-1">
+            ⏰ {formatearHora(item.hora_inicio)} - {formatearHora(item.hora_fin)} hs
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between gap-3">
+        <div>
+          <span className="block text-[9px] uppercase font-bold text-slate-500">Precio / turno</span>
+          <span className="text-sm font-black text-amber-500">
+            Bs. {item.cancha?.precio || "--"}
+          </span>
+        </div>
+
+        {/* BARRA DE PROGRESO CON ÍCONO DE PERSONAS */}
+        <div className="flex items-center gap-2 flex-1 justify-end">
+          {/* Icono del grupo de usuarios */}
+          <div className="flex -space-x-1 text-amber-500">
+            <svg
+              className="w-5 h-5 fill-current"
+              viewBox="0 0 24 24"
+            >
+              <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
+            </svg>
+          </div>
+
+          {/* Barra Naranja de Progreso */}
+          <div className="w-20 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+            <div
+              className="h-full bg-gradient-to-r from-amber-500 to-[#f95721] rounded-full transition-all duration-500"
+              style={{ width: `${porcentaje}%` }}
+            />
+          </div>
+
+          {/* Texto de cupos */}
+          <span className="text-xs font-bold text-slate-200">
+            {inscritos}-{maximo}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
