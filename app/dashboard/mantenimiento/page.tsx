@@ -18,6 +18,7 @@ export default function MantenimientoDashboard() {
   const supabase = createClient();
   const [canchasPendientes, setCanchasPendientes] = useState<Cancha[]>([]);
   const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState<number | null>(null);
 
   useEffect(() => {
     cargarCanchas();
@@ -38,28 +39,41 @@ export default function MantenimientoDashboard() {
     setLoading(false);
   }
 
-  async function cambiarEstadoCancha(cancha: Cancha, nuevoEstado: "disponible" | "rechazado") {
-    // 1. Actualizar estado de la cancha
-    const { error } = await supabase
-      .from("cancha")
-      .update({ estado: nuevoEstado })
-      .eq("id_cancha", cancha.id_cancha);
+  async function cambiarEstadoCancha(cancha: Cancha, nuevoEstado: "Verificada" | "Rechazada") {
+    setProcessingId(cancha.id_cancha);
 
-    if (error) {
-      alert("Error al actualizar la cancha: " + error.message);
-      return;
+    try {
+      // 1. Actualizar estado de la cancha a "Verificada" o "Rechazada"
+      const { error: errorCancha } = await supabase
+        .from("cancha")
+        .update({ estado: nuevoEstado })
+        .eq("id_cancha", cancha.id_cancha);
+
+      if (errorCancha) {
+        throw new Error("Error al actualizar la cancha: " + errorCancha.message);
+      }
+
+      // 2. Notificar al propietario
+      if (cancha.id_propietario) {
+        const { error: errorNotif } = await supabase.from("Notificacion").insert({
+          id_usuario: cancha.id_propietario,
+          titulo: nuevoEstado === "Verificada" ? "Cancha Aprobada 🎉" : "Cancha Rechazada ❌",
+          mensaje: `La revisión de la cancha "${cancha.nombre}" ha finalizado. Estado: ${nuevoEstado.toUpperCase()}`,
+          leido: false,
+        });
+
+        if (errorNotif) {
+          console.error("Error al notificar al propietario:", errorNotif);
+        }
+      }
+
+      // Recargar la lista de solicitudes
+      await cargarCanchas();
+    } catch (err: any) {
+      alert(err.message || "Ocurrió un error inesperado.");
+    } finally {
+      setProcessingId(null);
     }
-
-    // 2. Notificar al propietario
-    if (cancha.id_propietario) {
-      await supabase.from("notificacion").insert({
-        id_usuario: cancha.id_propietario,
-        titulo: nuevoEstado === "disponible" ? "Cancha Aprobada 🎉" : "Cancha Rechazada ❌",
-        mensaje: `La revisión de la cancha "${cancha.nombre}" ha finalizado. Estado: ${nuevoEstado.toUpperCase()}`,
-      });
-    }
-
-    cargarCanchas();
   }
 
   return (
@@ -83,31 +97,76 @@ export default function MantenimientoDashboard() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {canchasPendientes.map((cancha) => (
-              <div key={cancha.id_cancha} className="rounded-2xl bg-white p-5 shadow-lg space-y-3">
-                <div>
-                  <h3 className="font-bold text-slate-900 text-base">{cancha.nombre}</h3>
-                  <p className="text-xs font-semibold text-amber-600">Estado: PENDIENTE DE REVISIÓN</p>
+              <div
+                key={cancha.id_cancha}
+                className="overflow-hidden rounded-2xl bg-white shadow-lg flex flex-col justify-between"
+              >
+                {/* Imagen */}
+                <div className="relative h-48 w-full bg-slate-100">
+                  <img
+                    src={
+                      cancha.imagen && cancha.imagen.trim() !== ""
+                        ? cancha.imagen
+                        : "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=800&auto=format&fit=crop&q=60"
+                    }
+                    alt={cancha.nombre}
+                    className="h-full w-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src =
+                        "https://images.unsplash.com/photo-1529900748604-07564a03e7a6?w=800&auto=format&fit=crop&q=60";
+                    }}
+                  />
+                  <span className="absolute top-3 right-3 rounded-full bg-amber-500/90 px-3 py-1 text-[10px] font-bold text-white backdrop-blur-sm shadow-md">
+                    PENDIENTE
+                  </span>
                 </div>
 
-                <div className="space-y-1 text-xs text-slate-600">
-                  <p>⚽ <strong>Tipo:</strong> {cancha.tipo_juego}</p>
-                  <p>💰 <strong>Precio:</strong> Bs. {cancha.precio}/hr</p>
-                  <p>📍 <strong>Ubicación:</strong> <a href={cancha.ubicacion} target="_blank" rel="noopener noreferrer" className="text-emerald-600 underline">Ver en Google Maps</a></p>
-                </div>
+                {/* Detalles */}
+                <div className="p-5 space-y-3 flex-1 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <h3 className="font-bold text-slate-900 text-lg leading-snug">
+                      {cancha.nombre}
+                    </h3>
 
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={() => cambiarEstadoCancha(cancha, "disponible")}
-                    className="flex-1 rounded-xl bg-emerald-600 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition"
-                  >
-                    Aprobar Cancha
-                  </button>
-                  <button
-                    onClick={() => cambiarEstadoCancha(cancha, "rechazado")}
-                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-100 transition"
-                  >
-                    Rechazar
-                  </button>
+                    <div className="space-y-1.5 text-xs text-slate-600 font-medium">
+                      <p className="flex items-center gap-1.5">
+                        ⚽ <span><strong>Tipo de Juego:</strong> {cancha.tipo_juego}</span>
+                      </p>
+                      <p className="flex items-center gap-1.5">
+                        💰 <span><strong>Precio:</strong> Bs. {cancha.precio} / hr</span>
+                      </p>
+                      <p className="flex items-center gap-1.5">
+                        📍 <strong>Ubicación:</strong>{" "}
+                        <a
+                          href={cancha.ubicacion}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-emerald-600 font-bold hover:underline"
+                        >
+                          Ver en Google Maps
+                        </a>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Acciones */}
+                  <div className="flex gap-2 pt-4">
+                    <button
+                      disabled={processingId === cancha.id_cancha}
+                      onClick={() => cambiarEstadoCancha(cancha, "Verificada")}
+                      className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-bold text-white hover:bg-emerald-700 active:scale-[0.98] transition disabled:opacity-50"
+                    >
+                      {processingId === cancha.id_cancha ? "Procesando..." : "Aprobar Cancha"}
+                    </button>
+
+                    <button
+                      disabled={processingId === cancha.id_cancha}
+                      onClick={() => cambiarEstadoCancha(cancha, "Rechazada")}
+                      className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-xs font-bold text-red-600 hover:bg-red-100 active:scale-[0.98] transition disabled:opacity-50"
+                    >
+                      Rechazar
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

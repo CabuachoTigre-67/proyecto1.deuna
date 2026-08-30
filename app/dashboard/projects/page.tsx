@@ -226,7 +226,6 @@ export default function MisCanchasProjectsPage() {
                     alt={c.nombre}
                     className="h-full w-full object-cover transition-transform duration-300 hover:scale-105"
                     onError={(e) => {
-                      // Fallback si la URL falla
                       (e.target as HTMLImageElement).src =
                         "https://images.unsplash.com/photo-1529900241469-a2a857f4f039?q=80&w=800&auto=format&fit=crop";
                     }}
@@ -239,7 +238,7 @@ export default function MisCanchasProjectsPage() {
               </div>
 
               {/* Contenido de la Tarjeta */}
-              <div className="flex flex-1 flex-col justify-between p-5">
+              <div className="flex flex-1 flex-col justify-between p-5 space-y-4">
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <h3 className="font-bold text-slate-900 text-base">{c.nombre}</h3>
@@ -256,7 +255,17 @@ export default function MisCanchasProjectsPage() {
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                {/* El botón solo se muestra cuando el usuario está en la pestaña "Verificadas" */}
+                {tabActual === "verificadas" && (
+                  <Link
+                    href={`/dashboard/projects/new/horario?id_cancha=${c.id_cancha}`}
+                    className="block text-center w-full rounded-xl bg-[#f95721] hover:bg-[#e04816] text-white py-2.5 text-xs font-bold transition shadow-sm active:scale-[0.98]"
+                  >
+                    📅 Configurar Horarios y Servicios
+                  </Link>
+                )}
+
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px]">
                   <a
                     href={c.ubicacion}
                     target="_blank"
