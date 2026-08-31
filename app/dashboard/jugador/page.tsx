@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/app/lib/supabase/client";
 
 interface Cancha {
@@ -21,26 +23,25 @@ interface DisponibilidadCancha {
   hora_inicio: string;
   hora_fin: string;
   esta_ocupada: boolean;
-  jugadores_inscritos?: number; // Cantidad actual de inscritos
-  min_jugadores?: number;      // Mínimo para completar (ej. 10 o 11)
-  max_jugadores?: number;      // Cupo máximo (ej. 14)
+  jugadores_inscritos?: number;
+  min_jugadores?: number;
+  max_jugadores?: number;
   cancha?: Cancha;
 }
 
 interface PerfilUsuario {
   dias_preferidos: string[];
-  hora_inicio_preferida: string;
-  hora_fin_preferida: string;
+  turno_preferencia: string;
 }
 
 export default function DashboardPage() {
   const supabase = createClient();
+  const router = useRouter();
   const [loading, setLoading] = useState<boolean>(true);
 
   const [perfil, setPerfil] = useState<PerfilUsuario>({
-    dias_preferidos: ["Sábado", "Domingo", "Lunes"],
-    hora_inicio_preferida: "16:00",
-    hora_fin_preferida: "22:00",
+    dias_preferidos: ["Sáb", "Dom", "Lun"],
+    turno_preferencia: "Noche",
   });
 
   const [todosLosTurnos, setTodosLosTurnos] = useState<DisponibilidadCancha[]>([]);
@@ -59,19 +60,27 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const { data: userAuth } = await supabase.auth.getUser();
+
+      let perfilActual: PerfilUsuario = perfil;
+
       if (userAuth?.user) {
-        const { data: perfilData } = await supabase
-          .from("perfil")
-          .select("dias_preferidos, hora_inicio_preferida, hora_fin_preferida")
-          .eq("id_usuario", userAuth.user.id)
+        // ✅ CORREGIDO: Se cambia 'perfil' por 'usuario' y se leen las columnas correctas
+        const { data: usuarioData } = await supabase
+          .from("usuario")
+          .select("dias_preferencia, turno_preferencia")
+          .eq("correo", userAuth.user.email)
           .maybeSingle();
 
-        if (perfilData) {
-          setPerfil({
-            dias_preferidos: perfilData.dias_preferidos || ["Sábado", "Domingo", "Lunes"],
-            hora_inicio_preferida: perfilData.hora_inicio_preferida || "16:00",
-            hora_fin_preferida: perfilData.hora_fin_preferida || "22:00",
-          });
+        if (usuarioData) {
+          const diasArray = usuarioData.dias_preferencia
+            ? usuarioData.dias_preferencia.split(",").map((d: string) => d.trim())
+            : ["Sáb", "Dom", "Lun"];
+
+          perfilActual = {
+            dias_preferidos: diasArray,
+            turno_preferencia: usuarioData.turno_preferencia || "Noche",
+          };
+          setPerfil(perfilActual);
         }
       }
 
@@ -104,7 +113,7 @@ export default function DashboardPage() {
       if (data && data.length > 0) {
         const turnos = data as unknown as DisponibilidadCancha[];
         setTodosLosTurnos(turnos);
-        procesarSecciones(turnos, perfil);
+        procesarSecciones(turnos, perfilActual);
       } else {
         setTodosLosTurnos([]);
       }
@@ -124,11 +133,17 @@ export default function DashboardPage() {
       const hInicio = normalizarHora(t.hora_inicio);
 
       const coincideDia = userPerfil.dias_preferidos.some(
-        (d) => d.toLowerCase() === (t.dia_semana || "").toLowerCase()
+        (d) => (t.dia_semana || "").toLowerCase().includes(d.toLowerCase())
       );
       if (coincideDia) score += 35;
 
-      if (hInicio >= userPerfil.hora_inicio_preferida && hInicio <= userPerfil.hora_fin_preferida) {
+      // Evaluamos el turno (Mañana, Tarde, Noche)
+      const horaNum = parseInt(hInicio.split(":")[0], 10);
+      let turnoItem = "Noche";
+      if (horaNum < 12) turnoItem = "Mañana";
+      else if (horaNum < 18) turnoItem = "Tarde";
+
+      if (turnoItem.toLowerCase() === userPerfil.turno_preferencia.toLowerCase()) {
         score += 25;
       }
 
@@ -159,17 +174,25 @@ export default function DashboardPage() {
 
     const porDias = turnos.filter((t) =>
       userPerfil.dias_preferidos.some(
-        (d) => d.toLowerCase() === (t.dia_semana || "").toLowerCase()
+        (d) => (t.dia_semana || "").toLowerCase().includes(d.toLowerCase())
       )
     );
-    setPorDiasPreferidos(porDias.length > 0 ? porDias : turnos);
+    setPorDiasPreferidos(porDias);
 
     const porHorarios = turnos.filter((t) => {
-      const h = normalizarHora(t.hora_inicio);
-      return h >= userPerfil.hora_inicio_preferida && h <= userPerfil.hora_fin_preferida;
+      const hInicio = normalizarHora(t.hora_inicio);
+      const horaNum = parseInt(hInicio.split(":")[0], 10);
+      let turnoItem = "Noche";
+      if (horaNum < 12) turnoItem = "Mañana";
+      else if (horaNum < 18) turnoItem = "Tarde";
+      return turnoItem.toLowerCase() === userPerfil.turno_preferencia.toLowerCase();
     });
-    setPorHorariosPreferidos(porHorarios.length > 0 ? porHorarios : turnos);
+    setPorHorariosPreferidos(porHorarios);
   }
+
+  const irAUnirse = (idDisponibilidad: number) => {
+    router.push(`/dashboard/jugador/unirse?id_disponibilidad=${idDisponibilidad}`);
+  };
 
   if (loading) {
     return (
@@ -195,13 +218,13 @@ export default function DashboardPage() {
         <div className="rounded-3xl border border-slate-800 bg-slate-900/80 p-12 text-center text-slate-400">
           <p className="text-base font-bold text-white">No hay partidos ni turnos disponibles en la BD.</p>
           <p className="text-xs text-slate-500 mt-1">
-            Configura disponibilidades en tus canchas (asegurándote de que "esta_ocupada" sea false) para ver los partidos aquí.
+            Configura disponibilidades en tus canchas (asegurándote de que &quot;esta_ocupada&quot; sea false) para ver los partidos aquí.
           </p>
         </div>
       ) : (
         <>
           <section className="space-y-4">
-            <HeroCarousel recomendados={mejoresRecomendados} />
+            <HeroCarousel recomendados={mejoresRecomendados} onSelect={irAUnirse} />
           </section>
 
           <section className="space-y-4">
@@ -216,38 +239,42 @@ export default function DashboardPage() {
             </div>
             <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
               {masCercanosEnTiempo.map((item) => (
-                <TarjetaPartido key={item.id_disponibilidad} item={item} />
+                <TarjetaPartido key={item.id_disponibilidad} item={item} onSelect={irAUnirse} />
               ))}
             </div>
           </section>
 
-          <section className="space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="text-blue-400 text-lg">📅</span>
-              <h2 className="text-lg font-bold text-white">
-                Partidos en tus Días Preferidos ({perfil.dias_preferidos.join(", ")})
-              </h2>
-            </div>
-            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
-              {porDiasPreferidos.map((item) => (
-                <TarjetaPartido key={item.id_disponibilidad} item={item} />
-              ))}
-            </div>
-          </section>
+          {porDiasPreferidos.length > 0 && (
+            <section className="space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="text-blue-400 text-lg">📅</span>
+                <h2 className="text-lg font-bold text-white">
+                  Partidos en tus Días Preferidos ({perfil.dias_preferidos.join(", ")})
+                </h2>
+              </div>
+              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
+                {porDiasPreferidos.map((item) => (
+                  <TarjetaPartido key={item.id_disponibilidad} item={item} onSelect={irAUnirse} />
+                ))}
+              </div>
+            </section>
+          )}
 
-          <section className="space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="text-purple-400 text-lg">⏰</span>
-              <h2 className="text-lg font-bold text-white">
-                Partidos en tus Horarios Preferidos ({perfil.hora_inicio_preferida} - {perfil.hora_fin_preferida})
-              </h2>
-            </div>
-            <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
-              {porHorariosPreferidos.map((item) => (
-                <TarjetaPartido key={item.id_disponibilidad} item={item} />
-              ))}
-            </div>
-          </section>
+          {porHorariosPreferidos.length > 0 && (
+            <section className="space-y-4">
+              <div className="flex items-center gap-2">
+                <span className="text-purple-400 text-lg">⏰</span>
+                <h2 className="text-lg font-bold text-white">
+                  Partidos en tu Turno Preferido ({perfil.turno_preferencia})
+                </h2>
+              </div>
+              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
+                {porHorariosPreferidos.map((item) => (
+                  <TarjetaPartido key={item.id_disponibilidad} item={item} onSelect={irAUnirse} />
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="space-y-8 pt-4 border-t border-slate-800">
             <h2 className="text-xl font-extrabold text-white">🗓️ Partidos Organizados por Día</h2>
@@ -263,7 +290,7 @@ export default function DashboardPage() {
                   <h3 className="text-md font-bold text-amber-500 uppercase tracking-wide">{dia}</h3>
                   <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-slate-700">
                     {turnosDelDia.map((item) => (
-                      <TarjetaPartido key={item.id_disponibilidad} item={item} />
+                      <TarjetaPartido key={item.id_disponibilidad} item={item} onSelect={irAUnirse} />
                     ))}
                   </div>
                 </div>
@@ -276,7 +303,13 @@ export default function DashboardPage() {
   );
 }
 
-function HeroCarousel({ recomendados }: { recomendados: DisponibilidadCancha[] }) {
+function HeroCarousel({
+  recomendados,
+  onSelect,
+}: {
+  recomendados: DisponibilidadCancha[];
+  onSelect: (idDisponibilidad: number) => void;
+}) {
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
@@ -296,12 +329,18 @@ function HeroCarousel({ recomendados }: { recomendados: DisponibilidadCancha[] }
     "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80";
 
   return (
-    <div className="relative w-full overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl">
+    <div 
+      onClick={() => onSelect(actual.id_disponibilidad)}
+      className="relative w-full overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl cursor-pointer group"
+    >
       <div className="relative h-[380px] sm:h-[440px] w-full">
-        <img
+        <Image
           src={imagenMostrar}
           alt={cancha?.nombre || "Cancha"}
-          className="h-full w-full object-cover transition-all duration-700 ease-in-out"
+          fill
+          priority
+          sizes="100vw"
+          className="object-cover transition-all duration-700 ease-in-out group-hover:scale-105"
         />
 
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent" />
@@ -342,8 +381,11 @@ function HeroCarousel({ recomendados }: { recomendados: DisponibilidadCancha[] }
 
             <button
               type="button"
-              onClick={() => alert(`Uniéndose al turno ID: ${actual.id_disponibilidad}`)}
-              className="rounded-xl bg-[#f95721] px-6 py-3 text-xs sm:text-sm font-extrabold text-white transition hover:bg-[#e04816] active:scale-95 shadow-lg shadow-[#f95721]/30"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(actual.id_disponibilidad);
+              }}
+              className="rounded-xl bg-[#f95721] px-6 py-3 text-xs sm:text-sm font-extrabold text-white transition hover:bg-[#e04816] active:scale-95 shadow-lg shadow-[#f95721]/30 cursor-pointer"
             >
               Unirse ahora
             </button>
@@ -354,7 +396,10 @@ function HeroCarousel({ recomendados }: { recomendados: DisponibilidadCancha[] }
           {recomendados.map((_, idx) => (
             <button
               key={idx}
-              onClick={() => setIndex(idx)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIndex(idx);
+              }}
               className={`h-2 rounded-full transition-all duration-300 ${
                 index === idx ? "w-8 bg-[#f95721]" : "w-2 bg-slate-600/60 hover:bg-slate-400"
               }`}
@@ -370,42 +415,46 @@ function HeroCarousel({ recomendados }: { recomendados: DisponibilidadCancha[] }
 function TarjetaPartido({
   item,
   destacada = false,
+  onSelect,
 }: {
   item: DisponibilidadCancha;
   destacada?: boolean;
+  onSelect: (idDisponibilidad: number) => void;
 }) {
   const formatearHora = (hora: string) => (hora ? hora.substring(0, 5) : "--:--");
-  
+
   const imagenMostrar =
     item.cancha?.imagen ||
     "https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=600&q=80";
 
-  // Datos simulados si aún no vienen de la base de datos
   const inscritos = item.jugadores_inscritos ?? 11;
   const maximo = item.max_jugadores ?? 14;
   const porcentaje = Math.min(Math.round((inscritos / maximo) * 100), 100);
 
   return (
     <div
+      onClick={() => onSelect(item.id_disponibilidad)}
       className={`min-w-[320px] max-w-[320px] flex-shrink-0 flex flex-col justify-between rounded-2xl border ${
         destacada
           ? "border-amber-500/50 bg-slate-900 shadow-amber-500/10"
           : "border-slate-800 bg-slate-900/90"
-      } p-4 shadow-xl transition hover:border-slate-700`}
+      } p-4 shadow-xl transition hover:border-amber-500/70 hover:scale-[1.01] cursor-pointer`}
     >
       <div className="space-y-3">
         <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-800">
-          <img
+          <Image
             src={imagenMostrar}
             alt={item.cancha?.nombre || "Cancha"}
-            className="h-full w-full object-cover"
+            fill
+            sizes="320px"
+            className="object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent z-10" />
-          
+
           <div className="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-lg bg-black/70 px-2 py-0.5 text-[10px] font-bold text-emerald-400 backdrop-blur-md border border-emerald-500/30">
             {item.cancha?.tipo_juego || "Fútbol"}
           </div>
-          
+
           <div className="absolute bottom-2 left-2 z-20 text-[10px] font-semibold text-slate-300">
             📍 {item.cancha?.ubicacion || "Sin ubicación registrada"}
           </div>
@@ -432,9 +481,7 @@ function TarjetaPartido({
           </span>
         </div>
 
-        {/* BARRA DE PROGRESO CON ÍCONO DE PERSONAS */}
         <div className="flex items-center gap-2 flex-1 justify-end">
-          {/* Icono del grupo de usuarios */}
           <div className="flex -space-x-1 text-amber-500">
             <svg
               className="w-5 h-5 fill-current"
@@ -444,7 +491,6 @@ function TarjetaPartido({
             </svg>
           </div>
 
-          {/* Barra Naranja de Progreso */}
           <div className="w-20 h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
             <div
               className="h-full bg-gradient-to-r from-amber-500 to-[#f95721] rounded-full transition-all duration-500"
@@ -452,7 +498,6 @@ function TarjetaPartido({
             />
           </div>
 
-          {/* Texto de cupos */}
           <span className="text-xs font-bold text-slate-200">
             {inscritos}-{maximo}
           </span>

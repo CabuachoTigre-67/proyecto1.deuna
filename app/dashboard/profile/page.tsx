@@ -48,51 +48,54 @@ export default function ProfilePage() {
   useEffect(() => {
     async function loadUserProfile() {
       try {
-        const sessionString = localStorage.getItem("userSession");
-        if (!sessionString) {
+        // 1. Obtener la sesión activa de Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.getUser();
+
+        if (authError || !authData?.user) {
           router.push("/login");
           return;
         }
 
-        const session = JSON.parse(sessionString);
-        if (!session?.id_usuario) {
-          router.push("/login");
-          return;
-        }
+        const userEmail = authData.user.email;
 
-        setUserId(session.id_usuario);
-
+        // 2. Consultar directamente a la tabla 'usuario' de la BD
         const { data: usuario, error: supabaseError } = await supabase
           .from("usuario")
           .select("*")
-          .eq("id_usuario", session.id_usuario)
-          .single();
+          .eq("correo", userEmail)
+          .maybeSingle();
 
-        if (supabaseError || !usuario) {
-          console.error("Error al cargar perfil:", supabaseError);
+        if (supabaseError) {
+          console.error("Error al cargar perfil desde usuario:", supabaseError);
           setError("No se pudo cargar la información del perfil.");
           setLoading(false);
           return;
         }
 
-        const fechaFormatted = usuario.fecha_nacimiento
-          ? new Date(usuario.fecha_nacimiento).toISOString().split("T")[0]
-          : "";
+        if (usuario) {
+          setUserId(usuario.id_usuario);
 
-        const loadedData = {
-          nombre: usuario.nombre || "",
-          apellido: usuario.apellido || "",
-          apodo: usuario.apodo || "",
-          correo: usuario.correo || "",
-          telefono: usuario.telefono || "",
-          fecha_nacimiento: fechaFormatted,
-          posicion_juego: usuario.posicion_juego || "",
-          dias_preferencia: usuario.dias_preferencia || "",
-          turno_preferencia: usuario.turno_preferencia || "",
-        };
+          const fechaFormatted = usuario.fecha_nacimiento
+            ? new Date(usuario.fecha_nacimiento).toISOString().split("T")[0]
+            : "";
 
-        setForm(loadedData);
-        setOriginalForm(loadedData);
+          const loadedData = {
+            nombre: usuario.nombre || "",
+            apellido: usuario.apellido || "",
+            apodo: usuario.apodo || "",
+            correo: usuario.correo || userEmail || "",
+            telefono: usuario.telefono || "",
+            fecha_nacimiento: fechaFormatted,
+            posicion_juego: usuario.posicion_juego || "",
+            dias_preferencia: usuario.dias_preferencia || "",
+            turno_preferencia: usuario.turno_preferencia || "",
+          };
+
+          setForm(loadedData);
+          setOriginalForm(loadedData);
+        } else {
+          setForm((prev) => ({ ...prev, correo: userEmail || "" }));
+        }
       } catch (err) {
         console.error("Error inesperado:", err);
         setError("Ocurrió un error al procesar los datos del perfil.");
@@ -142,26 +145,27 @@ export default function ProfilePage() {
     setSaved(false);
 
     try {
-      if (!userId) throw new Error("No hay un usuario autenticado.");
-
       const cleanApodo = form.apodo.trim().replace(/^@/, "");
 
-      const { error: updateError } = await supabase
-        .from("usuario")
-        .update({
-          nombre: form.nombre.trim(),
-          apellido: form.apellido.trim(),
-          apodo: cleanApodo || null,
-          telefono: form.telefono.trim() || null,
-          fecha_nacimiento: form.fecha_nacimiento || null,
-          posicion_juego: form.posicion_juego || null,
-          dias_preferencia: form.dias_preferencia || null,
-          turno_preferencia: form.turno_preferencia || null,
-        })
-        .eq("id_usuario", userId);
+      const payload = {
+        nombre: form.nombre.trim(),
+        apellido: form.apellido.trim(),
+        apodo: cleanApodo || null,
+        telefono: form.telefono.trim() || null,
+        fecha_nacimiento: form.fecha_nacimiento || null,
+        posicion_juego: form.posicion_juego || null,
+        dias_preferencia: form.dias_preferencia || null,
+        turno_preferencia: form.turno_preferencia || null,
+      };
+
+      // Actualizar la tabla 'usuario' según esquema
+      const { error: updateError } = userId
+        ? await supabase.from("usuario").update(payload).eq("id_usuario", userId)
+        : await supabase.from("usuario").update(payload).eq("correo", form.correo);
 
       if (updateError) throw updateError;
 
+      // Actualizar sesión local si existe
       const sessionString = localStorage.getItem("userSession");
       if (sessionString) {
         const session = JSON.parse(sessionString);
@@ -222,7 +226,7 @@ export default function ProfilePage() {
           </div>
           <div>
             <h2 className="text-lg font-bold text-slate-900 capitalize">
-              {form.nombre} {form.apellido}
+              {form.nombre || "Jugador"} {form.apellido}
             </h2>
             <p className="text-xs font-medium text-slate-500">{form.correo}</p>
           </div>

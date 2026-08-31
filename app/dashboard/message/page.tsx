@@ -1,373 +1,336 @@
-    "use client";
+"use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { createClient } from "@/app/lib/supabase/client";
 
 interface Usuario {
   id_usuario: number;
   nombre: string;
-  apellido?: string;
-  email: string;
+  apodo?: string | null;
+  correo?: string;
+  rol?: string;
 }
 
-interface Mensaje {
-  id_mensaje?: number;
-  id_emisor: number;
+interface RelacionAmistad {
+  id_solicitante: number;
   id_receptor: number;
-  mensaje: string;
-  fecha_envio?: string;
+  estado: string;
 }
 
 export default function MensajesPage() {
   const supabase = createClient();
 
   const [usuarioActual, setUsuarioActual] = useState<Usuario | null>(null);
-  const [tabActiva, setTabActiva] = useState<"chats" | "buscar">("chats");
-
-  // Estado de Búsqueda y Amistades
-  const [busqueda, setBusqueda] = useState("");
-  const [usuariosEncontrados, setUsuariosEncontrados] = useState<Usuario[]>([]);
-  const [solicitudEnviada, setSolicitudEnviada] = useState<number[]>([]);
-
-  // Estado de Chats y Mensajería
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [amigos, setAmigos] = useState<Usuario[]>([]);
-  const [chatSeleccionado, setChatSeleccionado] = useState<Usuario | null>(null);
-  const [mensajes, setMensajes] = useState<Mensaje[]>([]);
-  const [nuevoMensaje, setNuevoMensaje] = useState("");
-  const [loadingMensajes, setLoadingMensajes] = useState(false);
+  const [solicitudes, setSolicitudes] = useState<Usuario[]>([]);
+  const [relaciones, setRelaciones] = useState<RelacionAmistad[]>([]);
+  const [busqueda, setBusqueda] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  // 1. Cargar Sesión del Usuario
   useEffect(() => {
     const sessionString = localStorage.getItem("userSession");
-    if (sessionString) {
-      try {
-        const session = JSON.parse(sessionString);
-        if (session?.id_usuario) {
-          setUsuarioActual(session);
-        }
-      } catch (err) {
-        console.error("Error al leer sesión:", err);
+    if (!sessionString) return;
+
+    try {
+      const session = JSON.parse(sessionString);
+      if (session?.id_usuario) {
+        setUsuarioActual({
+          id_usuario: session.id_usuario,
+          nombre: session.nombre || "",
+          apodo: session.apodo || null,
+          correo: session.correo || "",
+          rol: session.rol || "",
+        });
       }
+    } catch (err) {
+      console.error("Error al leer sesión:", err);
     }
   }, []);
 
-  // 2. Cargar Lista de Amigos / Contactos
   useEffect(() => {
     if (!usuarioActual) return;
-    cargarAmigos();
+    cargarDatos();
   }, [usuarioActual]);
 
-  async function cargarAmigos() {
+  async function cargarDatos() {
     if (!usuarioActual) return;
 
-    // Consulta las conexiones aceptadas en la tabla 'amistad'
-    const { data, error } = await supabase
-      .from("amistad")
-      .select(`
-        id_usuario1,
-        id_usuario2,
-        usuario1:usuario!id_usuario1(id_usuario, nombre, email),
-        usuario2:usuario!id_usuario2(id_usuario, nombre, email)
-      `)
-      .or(`id_usuario1.eq.${usuarioActual.id_usuario},id_usuario2.eq.${usuarioActual.id_usuario}`)
-      .eq("estado", "Aceptado");
+    setLoading(true);
 
-    if (error) {
-      console.error("Error cargando amigos:", error);
-      return;
-    }
+    try {
+      // 1. Cargar otros usuarios
+      const { data: usuariosData, error: errorUsuarios } = await supabase
+        .from("usuario")
+        .select("id_usuario, nombre, apodo, correo, rol")
+        .neq("id_usuario", usuarioActual.id_usuario)
+        .order("apodo", { ascending: true });
 
-    if (data) {
-      const listaAmigos: Usuario[] = data.map((item: any) => {
-        return item.id_usuario1 === usuarioActual.id_usuario
-          ? item.usuario2
-          : item.usuario1;
+      if (errorUsuarios) {
+        console.error("Error cargando usuarios:", errorUsuarios);
+      }
+
+      // 2. Cargar relaciones de amistad
+      const { data: relacionesData, error: errorAmistad } = await supabase
+        .from("amistad")
+        .select("id_solicitante, id_receptor, estado")
+        .or(
+          `id_solicitante.eq.${usuarioActual.id_usuario},id_receptor.eq.${usuarioActual.id_usuario}`
+        );
+
+      if (errorAmistad) {
+        console.error("Error cargando amistades:", errorAmistad);
+      }
+
+      const listaUsuarios = usuariosData || [];
+      const listaRelaciones = (relacionesData as RelacionAmistad[]) || [];
+
+      const amigosMap = new Map<number, Usuario>();
+      const solicitudesMap = new Map<number, Usuario>();
+
+      listaRelaciones.forEach((rel) => {
+        const otroUsuarioId =
+          rel.id_solicitante === usuarioActual.id_usuario
+            ? rel.id_receptor
+            : rel.id_solicitante;
+
+        const usuarioRelacionado = listaUsuarios.find(
+          (u) => u.id_usuario === otroUsuarioId
+        );
+
+        if (!usuarioRelacionado) return;
+
+        // Amistad confirmada
+        if (rel.estado === "Aceptada") {
+          amigosMap.set(otroUsuarioId, usuarioRelacionado);
+        }
+
+        // Solicitud pendiente recibida por el usuario actual
+        if (
+          rel.estado === "Pendiente" &&
+          rel.id_receptor === usuarioActual.id_usuario
+        ) {
+          solicitudesMap.set(otroUsuarioId, usuarioRelacionado);
+        }
       });
-      setAmigos(listaAmigos);
+
+      setUsuarios(listaUsuarios);
+      setRelaciones(listaRelaciones);
+      setAmigos(Array.from(amigosMap.values()));
+      setSolicitudes(Array.from(solicitudesMap.values()));
+    } finally {
+      setLoading(false);
     }
   }
 
-  // 3. Buscar Jugadores para enviar Solicitud
-  async function handleBuscar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!busqueda.trim() || !usuarioActual) return;
-
-    const { data, error } = await supabase
-      .from("usuario")
-      .select("id_usuario, nombre, email")
-      .neq("id_usuario", usuarioActual.id_usuario)
-      .ilike("nombre", `%${busqueda.trim()}%`)
-      .limit(10);
-
-    if (error) {
-      console.error("Error al buscar usuarios:", error);
-      return;
-    }
-
-    setUsuariosEncontrados(data || []);
-  }
-
-  // 4. Enviar Solicitud de Amistad
   async function enviarSolicitudAmistad(idReceptor: number) {
     if (!usuarioActual) return;
 
     const { error } = await supabase.from("amistad").insert({
-      id_usuario1: usuarioActual.id_usuario,
-      id_usuario2: idReceptor,
+      id_solicitante: usuarioActual.id_usuario,
+      id_receptor: idReceptor,
       estado: "Pendiente",
     });
 
     if (error) {
       alert("No se pudo enviar la solicitud: " + error.message);
-    } else {
-      setSolicitudEnviada((prev) => [...prev, idReceptor]);
+      return;
     }
+
+    await cargarDatos();
   }
 
-  // 5. Cargar Mensajes del Chat Seleccionado
-  useEffect(() => {
-    if (!chatSeleccionado || !usuarioActual) return;
+  async function aceptarSolicitud(idSolicitante: number) {
+    if (!usuarioActual) return;
 
-    async function cargarMensajes() {
-      setLoadingMensajes(true);
-      const { data, error } = await supabase
-        .from("tercertiempo")
-        .select("*")
-        .or(
-          `and(id_emisor.eq.${usuarioActual?.id_usuario},id_receptor.eq.${chatSeleccionado?.id_usuario}),and(id_emisor.eq.${chatSeleccionado?.id_usuario},id_receptor.eq.${usuarioActual?.id_usuario})`
-        )
-        .order("fecha_envio", { ascending: true });
-
-      if (error) {
-        console.error("Error al obtener mensajes:", error);
-      } else {
-        setMensajes(data || []);
-      }
-      setLoadingMensajes(false);
-    }
-
-    cargarMensajes();
-  }, [chatSeleccionado, usuarioActual]);
-
-  // 6. Enviar Mensaje Directo
-  async function handleEnviarMensaje(e: React.FormEvent) {
-    e.preventDefault();
-    if (!nuevoMensaje.trim() || !chatSeleccionado || !usuarioActual) return;
-
-    const payload = {
-      id_emisor: usuarioActual.id_usuario,
-      id_receptor: chatSeleccionado.id_usuario,
-      mensaje: nuevoMensaje.trim(),
-    };
-
-    const { data, error } = await supabase
-      .from("tercertiempo")
-      .insert(payload)
-      .select()
-      .single();
+    const { error } = await supabase
+      .from("amistad")
+      .update({ estado: "Aceptada" })
+      .eq("id_solicitante", idSolicitante)
+      .eq("id_receptor", usuarioActual.id_usuario);
 
     if (error) {
-      alert("Error enviando el mensaje: " + error.message);
-    } else if (data) {
-      setMensajes((prev) => [...prev, data]);
-      setNuevoMensaje("");
+      alert("No se pudo aceptar la solicitud: " + error.message);
+      return;
     }
+
+    await cargarDatos();
   }
 
+  const usuariosFiltrados = usuarios.filter((user) => {
+    const nombre = (user.apodo || user.nombre || "").toLowerCase();
+    return nombre.includes(busqueda.trim().toLowerCase());
+  });
+
   return (
-    <div className="mx-auto flex h-[calc(100vh-8rem)] max-w-6xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-      {/* LATERAL IZQUIERDO: Lista de Chats / Búsqueda */}
-      <div className="flex w-full flex-col border-r border-slate-200 sm:w-80 md:w-96">
-        {/* Cabecera */}
-        <div className="bg-slate-900 p-4 text-white">
-          <h1 className="text-xl font-black">💬 Tercer Tiempo</h1>
-          <p className="text-xs text-slate-400">Mensajería y comunidad de jugadores</p>
-
-          {/* Navegación por Pestañas */}
-          <div className="mt-4 flex rounded-xl bg-slate-800 p-1">
-            <button
-              onClick={() => setTabActiva("chats")}
-              className={`w-1/2 rounded-lg py-1.5 text-xs font-bold transition ${
-                tabActiva === "chats"
-                  ? "bg-emerald-600 text-white"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              Chats
-            </button>
-            <button
-              onClick={() => setTabActiva("buscar")}
-              className={`w-1/2 rounded-lg py-1.5 text-xs font-bold transition ${
-                tabActiva === "buscar"
-                  ? "bg-emerald-600 text-white"
-                  : "text-slate-400 hover:text-white"
-              }`}
-            >
-              ➕ Buscar Jugadores
-            </button>
-          </div>
-        </div>
-
-        {/* CONTENIDO PESTAÑA CHATS */}
-        {tabActiva === "chats" && (
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
-            {amigos.length === 0 ? (
-              <div className="p-6 text-center text-xs text-slate-400">
-                Aún no tienes contactos. ¡Busca jugadores para enviarles una solicitud de amistad!
-              </div>
-            ) : (
-              amigos.map((amigo) => (
-                <button
-                  key={amigo.id_usuario}
-                  onClick={() => setChatSeleccionado(amigo)}
-                  className={`flex w-full items-center gap-3 p-4 text-left transition hover:bg-slate-50 ${
-                    chatSeleccionado?.id_usuario === amigo.id_usuario
-                      ? "bg-emerald-50/60 border-l-4 border-emerald-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 font-bold text-white">
-                    {amigo.nombre.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 overflow-hidden">
-                    <p className="truncate text-sm font-bold text-slate-800">
-                      {amigo.nombre}
-                    </p>
-                    <p className="truncate text-xs text-slate-400">{amigo.email}</p>
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* CONTENIDO PESTAÑA BUSCAR JUGADORES */}
-        {tabActiva === "buscar" && (
-          <div className="flex-1 space-y-4 p-4 overflow-y-auto">
-            <form onSubmit={handleBuscar} className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Nombre del jugador..."
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-800 outline-none focus:border-emerald-600"
-              />
-              <button
-                type="submit"
-                className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700"
-              >
-                Buscar
-              </button>
-            </form>
-
-            <div className="space-y-2">
-              {usuariosEncontrados.map((user) => {
-                const enviado = solicitudEnviada.includes(user.id_usuario);
-                return (
-                  <div
-                    key={user.id_usuario}
-                    className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-3"
-                  >
-                    <div>
-                      <p className="text-xs font-bold text-slate-800">{user.nombre}</p>
-                      <p className="text-[10px] text-slate-400">{user.email}</p>
-                    </div>
-                    <button
-                      disabled={enviado}
-                      onClick={() => enviarSolicitudAmistad(user.id_usuario)}
-                      className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition ${
-                        enviado
-                          ? "bg-slate-200 text-slate-500"
-                          : "bg-emerald-600 text-white hover:bg-emerald-700"
-                      }`}
-                    >
-                      {enviado ? "Enviada" : "➕ Agregar"}
-                    </button>
-                  </div>
-                );
-              })}
+    <div className="mx-auto max-w-6xl p-4 sm:p-6">
+      <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-xl">
+        <header className="border-b border-slate-200 bg-gradient-to-r from-emerald-600 to-green-500 px-5 py-5 text-white">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-emerald-100">
+                DeUna!
+              </p>
+              <h1 className="text-2xl font-black">Jugadores</h1>
+            </div>
+            <div className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm">
+              {amigos.length} amigos
             </div>
           </div>
-        )}
-      </div>
+        </header>
 
-      {/* LATERAL DERECHO: Ventana de Chat Activo */}
-      <div className="flex flex-1 flex-col bg-slate-50">
-        {chatSeleccionado ? (
-          <>
-            {/* Header del Chat */}
-            <div className="flex items-center gap-3 border-b border-slate-200 bg-white p-4 shadow-sm">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-600 font-bold text-white">
-                {chatSeleccionado.nombre.charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-slate-800">
-                  {chatSeleccionado.nombre}
-                </h2>
-                <p className="text-[10px] text-emerald-600 font-semibold">En línea</p>
-              </div>
+        <div className="grid gap-0 lg:grid-cols-[340px_1fr]">
+          <aside className="border-b border-slate-200 bg-slate-50 p-4 lg:border-b-0 lg:border-r">
+            <div className="mb-4">
+              <h2 className="text-sm font-black text-slate-800">Amigos</h2>
             </div>
 
-            {/* Mensajes del Chat */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {loadingMensajes ? (
-                <p className="text-center text-xs text-slate-400">Cargando conversación...</p>
-              ) : mensajes.length === 0 ? (
-                <p className="text-center text-xs text-slate-400">
-                  Aún no hay mensajes. ¡Escribe el primer mensaje!
-                </p>
+            <div className="space-y-3">
+              {amigos.length === 0 ? (
+                <p className="text-xs text-slate-500">Todavía no tienes amigos.</p>
               ) : (
-                mensajes.map((m, idx) => {
-                  const esMio = m.id_emisor === usuarioActual?.id_usuario;
-                  return (
-                    <div
-                      key={m.id_mensaje || idx}
-                      className={`flex ${esMio ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-xs rounded-2xl px-4 py-2.5 text-xs font-medium shadow-sm sm:max-w-md ${
-                          esMio
-                            ? "bg-emerald-600 text-white rounded-br-none"
-                            : "bg-white text-slate-800 border border-slate-100 rounded-bl-none"
-                        }`}
-                      >
-                        {m.mensaje}
+                amigos.map((amigo) => (
+                  <div
+                    key={amigo.id_usuario}
+                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-xs font-black text-emerald-700">
+                        {(amigo.apodo || amigo.nombre || "J").charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">
+                          {amigo.apodo || amigo.nombre}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          {amigo.rol || "Jugador"}
+                        </p>
                       </div>
                     </div>
-                  );
-                })
+                    <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">
+                      Amigo
+                    </span>
+                  </div>
+                ))
               )}
             </div>
 
-            {/* Campo de Texto para Enviar */}
-            <form
-              onSubmit={handleEnviarMensaje}
-              className="flex gap-2 border-t border-slate-200 bg-white p-3"
-            >
+            <div className="mt-6">
+              <h3 className="mb-3 text-sm font-black text-slate-800">Solicitudes</h3>
+              <div className="space-y-3">
+                {solicitudes.length === 0 ? (
+                  <p className="text-xs text-slate-500">No tienes solicitudes pendientes.</p>
+                ) : (
+                  solicitudes.map((usuario) => (
+                    <div
+                      key={usuario.id_usuario}
+                      className="rounded-2xl border border-amber-200 bg-amber-50 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-bold text-slate-800">
+                            {usuario.apodo || usuario.nombre}
+                          </p>
+                          <p className="text-[10px] text-slate-500">Quiere agregarte</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => aceptarSolicitud(usuario.id_usuario)}
+                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-700"
+                        >
+                          Aceptar
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </aside>
+
+          <main className="p-4 sm:p-6">
+            <div className="mb-5">
+              <label className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-slate-500">
+                Buscar jugador
+              </label>
               <input
                 type="text"
-                placeholder="Escribe un mensaje..."
-                value={nuevoMensaje}
-                onChange={(e) => setNuevoMensaje(e.target.value)}
-                className="flex-1 rounded-xl border border-slate-200 px-4 py-2.5 text-xs text-slate-800 outline-none focus:border-emerald-600"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Escribe un apodo..."
+                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800 outline-none transition focus:border-emerald-500 focus:bg-white"
               />
-              <button
-                type="submit"
-                className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-700"
-              >
-                Enviar 🚀
-              </button>
-            </form>
-          </>
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-            <div className="text-4xl">⚽</div>
-            <p className="mt-2 text-sm font-bold text-slate-700">Tercer Tiempo Chat</p>
-            <p className="mt-1 text-xs text-slate-400">
-              Selecciona un contacto a la izquierda para conversar o busca nuevos jugadores.
-            </p>
-          </div>
-        )}
+            </div>
+
+            {loading ? (
+              <div className="flex h-28 items-center justify-center text-sm font-bold text-slate-500">
+                Cargando jugadores...
+              </div>
+            ) : usuariosFiltrados.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center text-sm text-slate-500">
+                No se encontraron jugadores con ese apodo.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {usuariosFiltrados.map((user) => {
+                  const yaEsAmigo = amigos.some(
+                    (amigo) => amigo.id_usuario === user.id_usuario
+                  );
+                  
+                  const relacionExistente = relaciones.find(
+                    (r) =>
+                      (r.id_solicitante === usuarioActual?.id_usuario &&
+                        r.id_receptor === user.id_usuario) ||
+                      (r.id_receptor === usuarioActual?.id_usuario &&
+                        r.id_solicitante === user.id_usuario)
+                  );
+
+                  const yaEnviada =
+                    relacionExistente?.id_solicitante === usuarioActual?.id_usuario &&
+                    relacionExistente?.estado === "Pendiente";
+
+                  return (
+                    <div
+                      key={user.id_usuario}
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:p-4"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-green-600 text-sm font-black text-white">
+                          {(user.apodo || user.nombre || "J").charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="text-sm font-black text-slate-800">
+                            {user.apodo || user.nombre}
+                          </p>
+                          <p className="text-[11px] text-slate-500">{user.nombre}</p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => enviarSolicitudAmistad(user.id_usuario)}
+                        disabled={yaEsAmigo || yaEnviada}
+                        className={`rounded-xl px-4 py-2 text-[11px] font-bold transition ${
+                          yaEsAmigo
+                            ? "bg-emerald-100 text-emerald-700"
+                            : yaEnviada
+                              ? "bg-slate-200 text-slate-500"
+                              : "bg-emerald-600 text-white hover:bg-emerald-700"
+                        }`}
+                      >
+                        {yaEsAmigo
+                          ? "Amigos"
+                          : yaEnviada
+                            ? "Solicitada"
+                            : "Enviar solicitud"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </main>
+        </div>
       </div>
     </div>
   );

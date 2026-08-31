@@ -25,7 +25,7 @@ function ConfigurarCanchaContent() {
   const [diasSeleccionados, setDiasSeleccionados] = useState<string[]>([]);
   const [horaApertura, setHoraApertura] = useState<string>("08:00");
   const [horaCierre, setHoraCierre] = useState<string>("23:00");
-  const [duracionTurno, setDuracionTurno] = useState<number>(60); 
+  const [duracionTurno, setDuracionTurno] = useState<number>(60);
 
   // Estado Tercer Tiempo
   const [ofreceTercerTiempo, setOfreceTercerTiempo] = useState<boolean>(false);
@@ -47,29 +47,43 @@ function ConfigurarCanchaContent() {
   async function cargarDatosCancha() {
     setLoading(true);
     try {
+      const idCanchaNum = Number(idCancha);
+
       // 1. Obtener nombre de la cancha
       const { data: canchaData } = await supabase
         .from("cancha")
         .select("nombre")
-        .eq("id_cancha", idCancha)
+        .eq("id_cancha", idCanchaNum)
         .single();
 
       if (canchaData) setNombreCancha(canchaData.nombre);
 
-      // 2. Obtener productos de Tercer Tiempo guardados previamente
-      const { data: ttData, error: errTT } = await supabase
-        .from("tercertiempo")
-        .select("nombre_producto, precio_unitario")
-        .eq("id_cancha", idCancha);
+      // 2. Obtener las disponibilidades actuales asociadas a la cancha
+      const { data: disponibilidades } = await supabase
+        .from("disponibilidaddecancha")
+        .select("id_disponibilidad")
+        .eq("id_cancha", idCanchaNum);
 
-      if (errTT) {
-        console.error("Error consultando tercertiempo:", errTT);
-      }
+      if (disponibilidades && disponibilidades.length > 0) {
+        const idsDisponibilidad = disponibilidades.map((d) => d.id_disponibilidad);
 
-      if (ttData && ttData.length > 0) {
-        setOfreceTercerTiempo(true);
-        setProductos(
-          ttData.map((item) => {
+        // 3. Obtener los productos de Tercer Tiempo ligados a esas disponibilidades
+        const { data: ttData, error: errTT } = await supabase
+          .from("tercertiempo")
+          .select("nombre_producto, precio_unitario")
+          .in("id_disponibilidad", idsDisponibilidad);
+
+        if (errTT) {
+          console.error("Error consultando tercertiempo:", errTT);
+        }
+
+        if (ttData && ttData.length > 0) {
+          setOfreceTercerTiempo(true);
+
+          // Agrupar y desduplicar productos cargados
+          const unicos = new Map<string, ProductoTercerTiempo>();
+
+          ttData.forEach((item) => {
             let cat = "Otros";
             let nombre = item.nombre_producto || "";
 
@@ -81,13 +95,18 @@ function ConfigurarCanchaContent() {
               }
             }
 
-            return {
-              nombre_producto: nombre,
-              precio_unitario: Number(item.precio_unitario) || 0,
-              categoria: cat,
-            };
-          })
-        );
+            const clave = `${cat}-${nombre}-${item.precio_unitario}`;
+            if (!unicos.has(clave)) {
+              unicos.set(clave, {
+                nombre_producto: nombre,
+                precio_unitario: Number(item.precio_unitario) || 0,
+                categoria: cat,
+              });
+            }
+          });
+
+          setProductos(Array.from(unicos.values()));
+        }
       }
     } catch (err) {
       console.error("Error al cargar datos:", err);
@@ -182,6 +201,8 @@ function ConfigurarCanchaContent() {
 
     setSaving(true);
     try {
+      const idCanchaNum = Number(idCancha);
+
       // --- GENERACIÓN DE BLOQUES CON TIEMPO DE ESPERA (30 MIN) ---
       const nuevosBloques = [];
       const TIEMPO_ESPERA_MINUTOS = 30;
@@ -201,7 +222,7 @@ function ConfigurarCanchaContent() {
           const strFin = `${String(hFinBloque).padStart(2, "0")}:${String(mFinBloque).padStart(2, "0")}:00`;
 
           nuevosBloques.push({
-            id_cancha: Number(idCancha),
+            id_cancha: idCanchaNum,
             dia_semana: dia,
             hora_inicio: strInicio,
             hora_fin: strFin,
@@ -213,33 +234,83 @@ function ConfigurarCanchaContent() {
         }
       }
 
-      // 1. Eliminar disponibilidades previas
-      await supabase.from("disponibilidaddecancha").delete().eq("id_cancha", idCancha);
+      // PASO 1: Obtener disponibilidades antiguas para eliminar sus registros en tercertiempo primero
+      const { data: disponibilidadesAntiguas } = await supabase
+        .from("disponibilidaddecancha")
+        .select("id_disponibilidad")
+        .eq("id_cancha", idCanchaNum);
 
-      // 2. Insertar nuevas disponibilidades
-      if (nuevosBloques.length > 0) {
-        const { error: errorDisp } = await supabase
-          .from("disponibilidaddecancha")
-          .insert(nuevosBloques);
-        if (errorDisp) throw errorDisp;
+      if (disponibilidadesAntiguas && disponibilidadesAntiguas.length > 0) {
+        const idsViejos = disponibilidadesAntiguas.map((d) => d.id_disponibilidad);
+        await supabase.from("tercertiempo").delete().in("id_disponibilidad", idsViejos);
       }
 
-      // --- 3. Guardar Ofertas de Tercer Tiempo ---
-      await supabase.from("tercertiempo").delete().eq("id_cancha", idCancha);
+      // PASO 2: Eliminar disponibilidades previas de la cancha
+      const { error: errorDelDisp } = await supabase
+        .from("disponibilidaddecancha")
+        .delete()
+        .eq("id_cancha", idCanchaNum);
 
-      if (ofreceTercerTiempo && productos.length > 0) {
-        const registrosTT = productos.map((p) => ({
-          id_cancha: Number(idCancha),
-          nombre_producto: `[${p.categoria}] ${p.nombre_producto}`,
-          precio_unitario: p.precio_unitario,
-          cantidad: 1,
-        }));
+      if (errorDelDisp) throw errorDelDisp;
 
-        const { error: errorTT } = await supabase.from("tercertiempo").insert(registrosTT);
+      // PASO 3: Insertar los nuevos bloques de disponibilidad y capturar sus id_disponibilidad
+      let disponibilidadesCreadas: { id_disponibilidad: number }[] = [];
+
+      if (nuevosBloques.length > 0) {
+        const { data: creados, error: errorDisp } = await supabase
+          .from("disponibilidaddecancha")
+          .insert(nuevosBloques)
+          .select("id_disponibilidad");
+
+        if (errorDisp) {
+          console.error("❌ Error al insertar disponibilidades:", errorDisp);
+          alert(`Error en disponibilidades: ${errorDisp.message}`);
+          setSaving(false);
+          return;
+        }
+
+        if (!creados || creados.length === 0) {
+          alert("Error: No se pudieron generar las disponibilidades en la base de datos.");
+          setSaving(false);
+          return;
+        }
+
+        disponibilidadesCreadas = creados;
+      }
+
+      // PASO 4: Guardar Ofertas de Tercer Tiempo directamente asociadas a cada id_disponibilidad
+      if (ofreceTercerTiempo && productos.length > 0 && disponibilidadesCreadas.length > 0) {
+        const registrosTT: {
+          id_disponibilidad: number;
+          nombre_producto: string;
+          precio_unitario: number;
+          cantidad: number;
+        }[] = [];
+
+        disponibilidadesCreadas.forEach((disp) => {
+          productos.forEach((p) => {
+            registrosTT.push({
+              id_disponibilidad: disp.id_disponibilidad,
+              nombre_producto: `[${p.categoria}] ${p.nombre_producto}`,
+              precio_unitario: p.precio_unitario,
+              cantidad: 1,
+            });
+          });
+        });
+
+        const { data, error: errorTT } = await supabase
+          .from("tercertiempo")
+          .insert(registrosTT)
+          .select();
 
         if (errorTT) {
-          throw new Error(`Error al guardar Tercer Tiempo: ${errorTT.message}`);
+          console.error("❌ ERROR COMPLETO SUPABASE TERCER TIEMPO:", errorTT);
+          alert(`Error al guardar en Tercer Tiempo: ${errorTT.message} (Código: ${errorTT.code})`);
+          setSaving(false);
+          return;
         }
+
+        console.log("✅ Registros creados exitosamente en tercertiempo:", data);
       }
 
       alert("¡Configuración guardada exitosamente!");
@@ -254,37 +325,36 @@ function ConfigurarCanchaContent() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center text-sm font-bold text-white">
+      <div className="flex h-64 items-center justify-center text-sm font-bold text-slate-700">
         Cargando configuración...
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 p-6 text-slate-100">
+    <div className="mx-auto max-w-4xl space-y-8 p-6 text-slate-700">
       <div>
-        <span className="text-xs font-bold uppercase tracking-wider text-amber-500">
+        <span className="text-xs font-bold uppercase tracking-wider text-emerald-600">
           GESTIÓN DE CANCHA VALIDADA
         </span>
-        <h1 className="text-3xl font-black text-white">Configurar Disponibilidad y Servicios</h1>
-        <p className="text-xs text-slate-400">
-          Cancha: <span className="font-bold text-white">{nombreCancha || `#${idCancha}`}</span>
+        <h1 className="text-3xl font-black text-slate-900">Configurar Disponibilidad y Servicios</h1>
+        <p className="text-xs text-slate-500">
+          Cancha: <span className="font-bold text-slate-800">{nombreCancha || `#${idCancha}`}</span>
         </p>
       </div>
 
-      {/* SECCIÓN 1: DISPONIBILIDAD DE HORARIOS */}
-      <section className="space-y-6 rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl backdrop-blur-md">
-        <h2 className="flex items-center gap-2 text-base font-bold text-white">
+      <section className="space-y-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-xl backdrop-blur-md">
+        <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
           📅 1. Disponibilidad de Horarios
         </h2>
 
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <label className="text-xs font-bold text-slate-300">Días Habilitados:</label>
+            <label className="text-xs font-bold text-slate-600">Días Habilitados:</label>
             <button
               type="button"
               onClick={seleccionarTodosDias}
-              className="text-xs font-bold text-amber-500 hover:underline"
+              className="text-xs font-bold text-emerald-600 hover:underline"
             >
               {diasSeleccionados.length === diasSemana.length ? "Desmarcar todos" : "Seleccionar todos"}
             </button>
@@ -299,8 +369,8 @@ function ConfigurarCanchaContent() {
                   onClick={() => toggleDia(dia)}
                   className={`rounded-xl px-4 py-2 text-xs font-bold transition border ${
                     seleccionado
-                      ? "bg-amber-600 text-white border-amber-500 shadow"
-                      : "bg-slate-800/80 text-slate-400 border-slate-700 hover:text-white"
+                      ? "bg-emerald-600 text-white border-emerald-500 shadow"
+                      : "bg-slate-100 text-slate-600 border-slate-200 hover:text-slate-900"
                   }`}
                 >
                   {dia}
@@ -312,33 +382,33 @@ function ConfigurarCanchaContent() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-300">Hora de Apertura:</label>
+            <label className="text-xs font-bold text-slate-600">Hora de Apertura:</label>
             <input
               type="time"
               value={horaApertura}
               onChange={(e) => setHoraApertura(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-300">Hora de Cierre:</label>
+            <label className="text-xs font-bold text-slate-600">Hora de Cierre:</label>
             <input
               type="time"
               value={horaCierre}
               onChange={(e) => setHoraCierre(e.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-bold text-slate-300">
+          <label className="text-xs font-bold text-slate-600">
             Duración del turno (incluye 30 min de espera entre turnos):
           </label>
           <select
             value={duracionTurno}
             onChange={(e) => setDuracionTurno(Number(e.target.value))}
-            className="w-full rounded-xl border border-slate-700 bg-slate-800 p-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
           >
             <option value={60}>1 Hora (60 Minutos)</option>
             <option value={120}>2 Horas (120 Minutos)</option>
@@ -346,10 +416,9 @@ function ConfigurarCanchaContent() {
         </div>
       </section>
 
-      {/* SECCIÓN 2: OFERTA TERCER TIEMPO */}
-      <section className="space-y-6 rounded-3xl border border-slate-800 bg-slate-900/80 p-6 shadow-xl backdrop-blur-md">
+      <section className="space-y-6 rounded-3xl border border-slate-200 bg-white p-6 shadow-xl backdrop-blur-md">
         <div className="flex items-center justify-between">
-          <h2 className="flex items-center gap-2 text-base font-bold text-white">
+          <h2 className="flex items-center gap-2 text-base font-bold text-slate-900">
             🍺 2. Oferta Tercer Tiempo
           </h2>
           <label className="flex items-center gap-2 cursor-pointer">
@@ -357,22 +426,22 @@ function ConfigurarCanchaContent() {
               type="checkbox"
               checked={ofreceTercerTiempo}
               onChange={(e) => setOfreceTercerTiempo(e.target.checked)}
-              className="h-4 w-4 rounded accent-amber-500 cursor-pointer"
+              className="h-4 w-4 rounded accent-emerald-600 cursor-pointer"
             />
-            <span className="text-xs font-bold text-amber-400">
+            <span className="text-xs font-bold text-emerald-600">
               Ofrece servicios de Tercer Tiempo
             </span>
           </label>
         </div>
 
         {ofreceTercerTiempo && (
-          <div className="space-y-4 pt-2 border-t border-slate-800">
+          <div className="space-y-4 pt-2 border-t border-slate-200">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
               <div className="sm:col-span-3">
                 <select
                   value={nuevoProducto.categoria}
                   onChange={(e) => setNuevoProducto({ ...nuevoProducto, categoria: e.target.value })}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="Bebidas">🍺 Bebidas</option>
                   <option value="Comida">🍔 Comida</option>
@@ -387,7 +456,7 @@ function ConfigurarCanchaContent() {
                   placeholder="Nombre/Descripción (Ej: Paceña 620ml, Churrasco)"
                   value={nuevoProducto.nombre_producto}
                   onChange={(e) => setNuevoProducto({ ...nuevoProducto, nombre_producto: e.target.value })}
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
 
@@ -402,7 +471,7 @@ function ConfigurarCanchaContent() {
                       precio_unitario: e.target.value === "" ? 0 : Number(e.target.value),
                     })
                   }
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
 
@@ -410,7 +479,7 @@ function ConfigurarCanchaContent() {
                 <button
                   type="button"
                   onClick={agregarProducto}
-                  className="w-full h-full min-h-[38px] flex items-center justify-center rounded-xl bg-amber-600 text-base font-bold text-white hover:bg-amber-500 transition active:scale-95"
+                  className="w-full h-full min-h-[38px] flex items-center justify-center rounded-xl bg-emerald-600 text-base font-bold text-white hover:bg-emerald-500 transition active:scale-95"
                 >
                   +
                 </button>
@@ -419,25 +488,25 @@ function ConfigurarCanchaContent() {
 
             {productos.length > 0 && (
               <div className="space-y-2 pt-2">
-                <p className="text-xs font-semibold text-slate-400">
+                <p className="text-xs font-semibold text-slate-500">
                   Ofertas añadidas ({productos.length}):
                 </p>
                 <div className="grid gap-2">
                   {productos.map((prod, index) => (
                     <div
                       key={index}
-                      className="flex items-center justify-between rounded-xl bg-slate-800/80 p-3 text-xs border border-slate-700"
+                      className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-xs border border-slate-200"
                     >
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-amber-400">[{prod.categoria}]</span>
-                        <span className="text-slate-200">{prod.nombre_producto}</span>
+                        <span className="font-bold text-emerald-600">[{prod.categoria}]</span>
+                        <span className="text-slate-700">{prod.nombre_producto}</span>
                       </div>
                       <div className="flex items-center gap-4">
-                        <span className="font-bold text-white">Bs. {prod.precio_unitario}</span>
+                        <span className="font-bold text-slate-800">Bs. {prod.precio_unitario}</span>
                         <button
                           type="button"
                           onClick={() => eliminarProducto(index)}
-                          className="text-red-400 hover:text-red-300 text-xs px-2 py-1 rounded bg-slate-700/50"
+                          className="text-red-500 hover:text-red-600 text-xs px-2 py-1 rounded bg-slate-200"
                         >
                           🗑️
                         </button>
@@ -451,7 +520,6 @@ function ConfigurarCanchaContent() {
         )}
       </section>
 
-      {/* BOTÓN FINAL DE GUARDADO */}
       <button
         type="button"
         onClick={guardarConfiguracionCompleta}

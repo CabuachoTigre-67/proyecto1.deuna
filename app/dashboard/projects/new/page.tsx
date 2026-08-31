@@ -23,6 +23,7 @@ export default function NuevaCanchaPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [idPropietario, setIdPropietario] = useState<number | null>(null);
+  const isFormLocked = loading || uploadingImage || success;
 
   const [form, setForm] = useState({
     nombre: "",
@@ -198,6 +199,7 @@ export default function NuevaCanchaPage() {
             <input
               type="text"
               required
+              disabled={isFormLocked}
               placeholder="Ej: Cancha Sintética El Maracaná"
               value={form.nombre}
               onChange={(e) => update("nombre", e.target.value)}
@@ -234,6 +236,7 @@ export default function NuevaCanchaPage() {
               Tipo de Juego
               <select
                 value={form.tipo_juego}
+                disabled={isFormLocked}
                 onChange={(e) => update("tipo_juego", e.target.value)}
                 className={baseInputClass}
               >
@@ -252,6 +255,7 @@ export default function NuevaCanchaPage() {
                 required
                 min="0"
                 step="0.01"
+                disabled={isFormLocked}
                 placeholder="120"
                 value={form.precio}
                 onChange={(e) => update("precio", e.target.value)}
@@ -267,8 +271,9 @@ export default function NuevaCanchaPage() {
             <input
               type="file"
               accept="image/*"
+              disabled={isFormLocked}
               onChange={handleImageUpload}
-              className="block w-full text-xs text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-4 file:py-2.5 file:text-xs file:font-bold file:text-emerald-700 hover:file:bg-emerald-100"
+              className="block w-full text-xs text-slate-500 file:mr-4 file:rounded-xl file:border-0 file:bg-emerald-50 file:px-4 file:py-2.5 file:text-xs file:font-bold file:text-emerald-700 hover:file:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
             />
             {uploadingImage && (
               <p className="text-[11px] font-semibold text-emerald-600 animate-pulse">
@@ -299,14 +304,15 @@ export default function NuevaCanchaPage() {
           <button
             type="button"
             onClick={() => router.back()}
-            className="w-1/3 rounded-xl border border-slate-300 py-3.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition"
+            disabled={isFormLocked}
+            className="w-1/3 rounded-xl border border-slate-300 py-3.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition disabled:cursor-not-allowed disabled:opacity-60"
           >
             Cancelar
           </button>
 
           <button
             type="submit"
-            disabled={loading || uploadingImage || success}
+            disabled={isFormLocked}
             className="w-full rounded-xl bg-emerald-600 py-3.5 text-xs font-bold text-white transition hover:bg-emerald-700 active:scale-[0.99] shadow-md disabled:opacity-50"
           >
             {loading ? "Registrando..." : "📨 Registrar y Solicitar Verificación"}

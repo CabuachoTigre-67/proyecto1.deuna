@@ -40,6 +40,10 @@ export default function RegisterPage() {
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: {
+          access_type: "offline",
+          prompt: "consent",
+        },
       },
     });
   };
@@ -73,11 +77,13 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      // 1. Verificar si el correo ya existe
+      const emailFormateado = correo.trim().toLowerCase();
+
+      // 1. Verificar si el correo ya existe en la tabla usuario
       const { data: usuarioExistente } = await supabase
         .from("usuario")
         .select("id_usuario")
-        .eq("correo", correo.trim().toLowerCase())
+        .eq("correo", emailFormateado)
         .maybeSingle();
 
       if (usuarioExistente) {
@@ -86,20 +92,38 @@ export default function RegisterPage() {
         return;
       }
 
-      // 2. Encriptar contraseña
+      // 2. Registrar el usuario en la Autenticación de Supabase (Evita fallos de sesión)
+      const { error: authError } = await supabase.auth.signUp({
+        email: emailFormateado,
+        password: password,
+        options: {
+          data: {
+            nombre: nombre.trim(),
+            apellido: apellido.trim(),
+          },
+        },
+      });
+
+      if (authError) {
+        setErrorMessage(`Error en autenticación: ${authError.message}`);
+        setLoading(false);
+        return;
+      }
+
+      // 3. Encriptar contraseña para la tabla personalizada
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // 3. Formatear días preferidos
+      // 4. Formatear días preferidos
       const diasString = preferredDays.length > 0 ? preferredDays.join(",") : "Sin especificar";
 
-      // 4. Inserción respetando la estructura exacta de la BD
+      // 5. Inserción correcta en la tabla usuario (insert antes de select)
       const { data: nuevoUsuario, error } = await supabase
         .from("usuario")
         .insert([
           {
             nombre: nombre.trim(),
             apellido: apellido.trim(),
-            correo: correo.trim().toLowerCase(),
+            correo: emailFormateado,
             telefono: telefono.trim(),
             fecha_nacimiento: fechaNacimiento,
             contrasena: hashedPassword,
@@ -107,20 +131,20 @@ export default function RegisterPage() {
             posicion_juego: position,
             dias_preferencia: diasString,
             turno_preferencia: preferredShift,
-            rol: "Jugador", // Se ajustó a mayúsculas según la convención del ENUM en PostgreSQL
+            rol: "Jugador",
           },
         ])
         .select()
         .single();
 
       if (error) {
-        console.error("Error Supabase:", error);
-        setErrorMessage(`Error al guardar: ${error.message}`);
+        console.error("Error Supabase usuario:", error);
+        setErrorMessage(`Error al guardar datos del usuario: ${error.message}`);
         setLoading(false);
         return;
       }
 
-      // 5. Guardar sesión e ingresar
+      // 6. Guardar sesión local y redirigir
       if (nuevoUsuario) {
         localStorage.setItem(
           "userSession",
@@ -133,6 +157,7 @@ export default function RegisterPage() {
         router.push("/dashboard");
       }
     } catch (err: any) {
+      console.error(err);
       setErrorMessage("Ocurrió un error inesperado al registrar la cuenta.");
     } finally {
       setLoading(false);
