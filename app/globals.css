@@ -1,8 +1,16 @@
 @import "tailwindcss";
+@import "@fortawesome/fontawesome-free/css/all.min.css";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f3f6f5;
+  --foreground: #121b1a;
+  --panel: rgba(255, 255, 255, 0.84);
+  --panel-strong: #ffffff;
+  --muted: #5a6765;
+  --line: rgba(15, 23, 42, 0.08);
+  --emerald: #22c55e;
+  --emerald-strong: #16a34a;
+  --brand-dark: #07151a;
 }
 
 @theme inline {
@@ -12,15 +20,26 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+input::placeholder {
+  color: rgba(100, 116, 139, 0.8);
+}
+
+button,
+input,
+a {
+  transition: all 0.2s ease;
 }
